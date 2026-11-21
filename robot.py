@@ -26,7 +26,7 @@
   robot shutdown [here]                  release torque after going home (or right here)
 
 Joints: pan lift elbow wrist roll gripper. Sides: left/l (white), right/r (orange).
-Real arms: gotos move >= 2 cm and joint moves >= 5 deg (gripper and roll free): no creeping.
+Real arms: gotos move >= 2 cm (+ one 1-2 cm fix per approach), joint moves >= 5 deg (gripper, roll free): no creeping.
 Flags: --json machine-readable output, --no-wait return before the motion finishes.
 """
 import json, os, sys, time

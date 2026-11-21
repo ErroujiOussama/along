@@ -191,7 +191,8 @@ BLOCK_DEG, BLOCK_S = 5.0, 0.4  # arm joint pushed > BLOCK_DEG off but not moving
 events = []                  # recent BLOCKED events (dicts with "t")
 from collections import deque
 traj = deque(maxlen=6000)   # (t, measured in KEYS order), 10 min at 10 Hz
-MIN_MOVE, MIN_GOTO, MIN_DEG = not SIM, 0.02, 5.0   # real arms: no tiny careful corrections
+MIN_MOVE, MIN_GOTO, MIN_FIX, MIN_DEG = not SIM, 0.02, 0.01, 5.0   # real arms: no creeping. One 1-2 cm fix per approach
+small_fix_used = {"left": False, "right": False}
 collide_cfg = {"on": SIM, "handover": False, "objects": []}   # objects: agent-placed (world frame), jaws may touch
 
 
@@ -565,9 +566,15 @@ def handle(parts):
         with lock:
             q = np.array([target[f"{side}_{j}"] for j in J])
         T0 = K.forward_kinematics(q); start = T0[:3, 3].copy(); n = max(int(np.linalg.norm(xyz - start) / 0.005), 1)
-        if MIN_MOVE and np.linalg.norm(xyz - start) < MIN_GOTO:
-            raise ValueError(f"goto of {np.linalg.norm(xyz - start) * 100:.1f} cm is too small: gotos are >= {MIN_GOTO * 100:.0f} cm "
-                             "(no creeping; estimate better and make one decisive move)")
+        dist = float(np.linalg.norm(xyz - start))
+        if MIN_MOVE and dist < MIN_GOTO:
+            if dist < MIN_FIX or small_fix_used[side]:
+                raise ValueError(f"goto of {dist * 100:.1f} cm is too small: gotos are >= {MIN_GOTO * 100:.0f} cm, plus ONE "
+                                 f"{MIN_FIX * 100:.0f}-{MIN_GOTO * 100:.0f} cm fix per approach (used: {small_fix_used[side]}). "
+                                 "No creeping: back off >= 2 cm and come in again with a better estimate")
+            small_fix_used[side] = True
+        else:
+            small_fix_used[side] = False
         path = []
         for i in range(1, n + 1):
             T = T0.copy(); T[:3, 3] = start + (xyz - start) * i / n
