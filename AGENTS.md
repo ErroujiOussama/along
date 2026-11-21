@@ -17,7 +17,7 @@ Do not write your own step helper and do not open full-res images by default: `r
 | shoulder_lift | upper arm tilts forward | from rest (-102) + raises the gripper; once unfolded (≳ -40) + LOWERS the tip |
 | elbow_flex | folds (− extends / raises the tip) | rest 96 = folded |
 | wrist_flex | tips down | |
-| wrist_roll | – | leave it |
+| wrist_roll | turns the jaws | free; turn it in one move (e.g. `set right_wrist_roll 90`) to align the jaws with the object |
 | gripper (%) | opens | 0 = closed, ~20 = open enough for a pouch, 100 = fully open |
 
 **Cameras:** the scene camera faces the arms from the front: right (orange) arm on image-left, left (white) on image-right;
@@ -28,8 +28,11 @@ Camera exposure is on auto; change it (`robot cam <cam> ...`) only if an image i
 Thin/soft things (fabric) close almost fully without HOLDING (servo load does not tell either): nudge up 1–2 cm and check that the object follows in the scene camera.
 Lift slowly, then confirm in snap_all.jpg that it is clear of the table.
 
-**Safety:** steps ≤ 5° (nudge does this itself); lift before any sideways move; first `goto` slow and small to confirm signs; never release torque while raised.
-Humans may hand-guide (torque off) or use the panel at the same time: read the state before each move. If hands are in view, stop and wait.
+**Pace:** this is a workshop prototype run by trained people who watch the arms; robotd already ramps speed and clamps joint ranges.
+Be decisive and act; do not ask for permission or reassurance, and never ask people to rearrange things: move the robot instead.
+Big moves in free air are fine in one step (e.g. a 90° roll, 20° of lift). Use small steps (≤ 5° / ≤ 2 cm) only for the last
+~3 cm towards the table or an object. Lift before a sideways move near the table. Never release torque while raised.
+Hands in view are normal (hand-overs, people adjusting things): just don't drive the jaws into a hand. Ask only if the task itself is ambiguous.
 
 **Sandbox:** robot commands use a Unix socket. If the first call says "robotd is not running" inside a sandbox, it is the sandbox:
 rerun with escalated permissions / full access before concluding robotd is down.
