@@ -1,0 +1,1535 @@
+{
+  "frame": {
+    "origin": "left arm base",
+    "axes": [
+      "forward",
+      "left",
+      "up"
+    ],
+    "length_unit": "m",
+    "angle_unit": "deg"
+  },
+  "captured_at": "2026-11-21T16:11:57+01:00",
+  "table_z": -0.02,
+  "right_base_pose": {
+    "position": [
+      0.00063,
+      -0.21287,
+      0.0
+    ],
+    "yaw_deg": 0.06,
+    "horizontal_uncertainty_m": 0.025,
+    "yaw_uncertainty_deg": 5
+  },
+  "scene_camera": {
+    "model": "Logitech C920",
+    "position": [
+      0.61101,
+      -0.09175,
+      0.32695
+    ],
+    "forward": [
+      -0.81035,
+      0.05965,
+      -0.5829
+    ],
+    "up": [
+      -0.58262,
+      0.02372,
+      0.8124
+    ],
+    "focal_px": 679.2,
+    "image_size_px": [
+      800,
+      450
+    ],
+    "position_uncertainty_m": 0.05
+  },
+  "kinematics": {
+    "joint_order": [
+      "shoulder_pan",
+      "shoulder_lift",
+      "elbow_flex",
+      "wrist_flex",
+      "wrist_roll"
+    ],
+    "joint_origins": [
+      [
+        [
+          -1.0,
+          -0.0,
+          -0.0,
+          0.03884
+        ],
+        [
+          -0.0,
+          1.0,
+          0.0,
+          -0.0
+        ],
+        [
+          -0.0,
+          0.0,
+          -1.0,
+          0.0624
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      [
+        [
+          -0.0,
+          1.0,
+          0.0,
+          -0.0304
+        ],
+        [
+          0.0,
+          -0.0,
+          1.0,
+          -0.01828
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          -0.0542
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      [
+        [
+          -0.0,
+          -1.0,
+          -0.0,
+          -0.11257
+        ],
+        [
+          1.0,
+          -0.0,
+          0.0,
+          -0.028
+        ],
+        [
+          -0.0,
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      [
+        [
+          -0.0,
+          1.0,
+          -0.0,
+          -0.1349
+        ],
+        [
+          -1.0,
+          -0.0,
+          -0.0,
+          0.0052
+        ],
+        [
+          -0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      [
+        [
+          -0.99882,
+          -0.04866,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          -0.0611
+        ],
+        [
+          -0.04866,
+          0.99882,
+          -0.0,
+          0.0181
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    ],
+    "tip_offset": [
+      -0.0079,
+      -0.00022,
+      -0.09813
+    ]
+  },
+  "arms": {
+    "left": {
+      "joint_angles_deg": [
+        2.3,
+        -101.4,
+        96.6,
+        27.6,
+        -0.7
+      ],
+      "gripper_percent": 2.8,
+      "links": [
+        {
+          "name": "base",
+          "shape": "capsule",
+          "a": [
+            0.0,
+            0.0,
+            0.02
+          ],
+          "b": [
+            0.0388,
+            0.0,
+            0.055
+          ],
+          "radius": 0.045,
+          "color": "#ece8df",
+          "uncertainty_m": 0.01,
+          "frame": 0
+        },
+        {
+          "name": "shoulder",
+          "shape": "capsule",
+          "a": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "b": [
+            -0.0304,
+            -0.0183,
+            -0.0542
+          ],
+          "radius": 0.035,
+          "color": "#ece8df",
+          "uncertainty_m": 0.01,
+          "frame": 1
+        },
+        {
+          "name": "upper_arm",
+          "shape": "capsule",
+          "a": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "b": [
+            -0.1126,
+            -0.028,
+            0.0
+          ],
+          "radius": 0.028,
+          "color": "#ece8df",
+          "uncertainty_m": 0.01,
+          "frame": 2
+        },
+        {
+          "name": "forearm",
+          "shape": "capsule",
+          "a": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "b": [
+            -0.1349,
+            0.0052,
+            0.0
+          ],
+          "radius": 0.025,
+          "color": "#ece8df",
+          "uncertainty_m": 0.01,
+          "frame": 3
+        },
+        {
+          "name": "wrist",
+          "shape": "capsule",
+          "a": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "b": [
+            0.0,
+            -0.0611,
+            0.0181
+          ],
+          "radius": 0.025,
+          "color": "#ece8df",
+          "uncertainty_m": 0.01,
+          "frame": 4
+        },
+        {
+          "name": "gripper",
+          "shape": "capsule",
+          "a": [
+            0.004,
+            0.0,
+            -0.02
+          ],
+          "b": [
+            -0.004,
+            0.0,
+            -0.085
+          ],
+          "radius": 0.022,
+          "color": "#344450",
+          "uncertainty_m": 0.01,
+          "frame": 5
+        },
+        {
+          "name": "left wrist camera",
+          "shape": "box",
+          "center": [
+            0.08284,
+            -0.0228,
+            0.00272
+          ],
+          "size": [
+            0.024,
+            0.046,
+            0.034
+          ],
+          "yaw_deg": 0,
+          "color": "#28899a",
+          "uncertainty_m": 0.018,
+          "frame": 5,
+          "forward": [
+            0,
+            0,
+            -1
+          ]
+        }
+      ]
+    },
+    "right": {
+      "joint_angles_deg": [
+        -5.5,
+        -93.4,
+        96.5,
+        12.4,
+        0.1
+      ],
+      "gripper_percent": 3.3,
+      "links": [
+        {
+          "name": "base",
+          "shape": "capsule",
+          "a": [
+            0.0,
+            0.0,
+            0.02
+          ],
+          "b": [
+            0.0388,
+            0.0,
+            0.055
+          ],
+          "radius": 0.045,
+          "color": "#f09238",
+          "uncertainty_m": 0.01,
+          "frame": 0
+        },
+        {
+          "name": "shoulder",
+          "shape": "capsule",
+          "a": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "b": [
+            -0.0304,
+            -0.0183,
+            -0.0542
+          ],
+          "radius": 0.035,
+          "color": "#f09238",
+          "uncertainty_m": 0.01,
+          "frame": 1
+        },
+        {
+          "name": "upper_arm",
+          "shape": "capsule",
+          "a": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "b": [
+            -0.1126,
+            -0.028,
+            0.0
+          ],
+          "radius": 0.028,
+          "color": "#f09238",
+          "uncertainty_m": 0.01,
+          "frame": 2
+        },
+        {
+          "name": "forearm",
+          "shape": "capsule",
+          "a": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "b": [
+            -0.1349,
+            0.0052,
+            0.0
+          ],
+          "radius": 0.025,
+          "color": "#f09238",
+          "uncertainty_m": 0.01,
+          "frame": 3
+        },
+        {
+          "name": "wrist",
+          "shape": "capsule",
+          "a": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "b": [
+            0.0,
+            -0.0611,
+            0.0181
+          ],
+          "radius": 0.025,
+          "color": "#f09238",
+          "uncertainty_m": 0.01,
+          "frame": 4
+        },
+        {
+          "name": "gripper",
+          "shape": "capsule",
+          "a": [
+            0.004,
+            0.0,
+            -0.02
+          ],
+          "b": [
+            -0.004,
+            0.0,
+            -0.085
+          ],
+          "radius": 0.022,
+          "color": "#344450",
+          "uncertainty_m": 0.01,
+          "frame": 5
+        },
+        {
+          "name": "right wrist camera",
+          "shape": "box",
+          "center": [
+            0.04742,
+            -0.00608,
+            -0.03557
+          ],
+          "size": [
+            0.024,
+            0.046,
+            0.034
+          ],
+          "yaw_deg": 0,
+          "color": "#28899a",
+          "uncertainty_m": 0.018,
+          "frame": 5,
+          "forward": [
+            0,
+            0,
+            -1
+          ]
+        }
+      ]
+    }
+  },
+  "objects": [
+    {
+      "name": "Tabletop",
+      "shape": "box",
+      "center": [
+        0.331,
+        -0.073,
+        -0.039
+      ],
+      "size": [
+        0.726,
+        0.814,
+        0.038
+      ],
+      "yaw_deg": 0,
+      "color": "#c4c0b8",
+      "uncertainty_m": 0.08,
+      "top_uncertainty_m": 0.02
+    },
+    {
+      "name": "C920 scene camera",
+      "shape": "box",
+      "center": [
+        0.61101,
+        -0.09175,
+        0.32695
+      ],
+      "size": [
+        0.03,
+        0.094,
+        0.034
+      ],
+      "yaw_deg": 0,
+      "color": "#28899a",
+      "uncertainty_m": 0.05,
+      "forward": [
+        -0.81035,
+        0.05965,
+        -0.5829
+      ],
+      "up": [
+        -0.58262,
+        0.02372,
+        0.8124
+      ]
+    },
+    {
+      "name": "Black zip pouch",
+      "shape": "box",
+      "center": [
+        0.359,
+        0.075,
+        0.0
+      ],
+      "size": [
+        0.105,
+        0.109,
+        0.04
+      ],
+      "yaw_deg": 8,
+      "color": "#344550",
+      "uncertainty_m": 0.032
+    },
+    {
+      "name": "Pouch zipper pull",
+      "shape": "capsule",
+      "a": [
+        0.327,
+        0.025,
+        -0.012
+      ],
+      "b": [
+        0.32,
+        0.008,
+        -0.013
+      ],
+      "radius": 0.006,
+      "color": "#344550",
+      "uncertainty_m": 0.022
+    },
+    {
+      "name": "Pen",
+      "shape": "capsule",
+      "a": [
+        -0.05175,
+        -0.40735,
+        -0.012
+      ],
+      "b": [
+        0.11091,
+        -0.36589,
+        -0.012
+      ],
+      "radius": 0.006,
+      "color": "#3c4153",
+      "uncertainty_m": 0.025
+    },
+    {
+      "name": "White mug",
+      "shape": "capsule",
+      "a": [
+        0.108,
+        0.283,
+        0.019
+      ],
+      "b": [
+        0.108,
+        0.283,
+        0.028
+      ],
+      "radius": 0.037,
+      "color": "#ece0cd",
+      "uncertainty_m": 0.045
+    },
+    {
+      "name": "Mug coaster or card",
+      "shape": "box",
+      "center": [
+        0.125,
+        0.282,
+        -0.018
+      ],
+      "size": [
+        0.102,
+        0.093,
+        0.004
+      ],
+      "yaw_deg": 0,
+      "color": "#ded8ce",
+      "uncertainty_m": 0.043
+    },
+    {
+      "name": "Red ring stand foot",
+      "shape": "box",
+      "center": [
+        0.168,
+        0.207,
+        -0.012
+      ],
+      "size": [
+        0.017,
+        0.076,
+        0.016
+      ],
+      "yaw_deg": 12,
+      "color": "#62727a",
+      "uncertainty_m": 0.04
+    },
+    {
+      "name": "Red ring stand stem",
+      "shape": "capsule",
+      "a": [
+        0.166,
+        0.205,
+        -0.006
+      ],
+      "b": [
+        0.148,
+        0.223,
+        0.05
+      ],
+      "radius": 0.007,
+      "color": "#525c60",
+      "uncertainty_m": 0.046
+    },
+    {
+      "name": "Red ring on stand",
+      "shape": "box",
+      "center": [
+        0.144,
+        0.222,
+        0.066
+      ],
+      "size": [
+        0.012,
+        0.043,
+        0.043
+      ],
+      "yaw_deg": 0,
+      "color": "#b73543",
+      "uncertainty_m": 0.05
+    },
+    {
+      "name": "Left laptop base",
+      "shape": "box",
+      "center": [
+        0.377,
+        0.213,
+        -0.007
+      ],
+      "size": [
+        0.273,
+        0.213,
+        0.026
+      ],
+      "yaw_deg": 0,
+      "color": "#6e737c",
+      "uncertainty_m": 0.065
+    },
+    {
+      "name": "Left laptop screen",
+      "shape": "box",
+      "center": [
+        0.404,
+        0.271,
+        0.101
+      ],
+      "size": [
+        0.277,
+        0.017,
+        0.205
+      ],
+      "yaw_deg": -8,
+      "color": "#616773",
+      "uncertainty_m": 0.085
+    },
+    {
+      "name": "Right laptop base",
+      "shape": "box",
+      "center": [
+        0.435,
+        -0.356,
+        -0.009
+      ],
+      "size": [
+        0.235,
+        0.213,
+        0.022
+      ],
+      "yaw_deg": 0,
+      "color": "#364153",
+      "uncertainty_m": 0.1
+    },
+    {
+      "name": "Right laptop screen",
+      "shape": "box",
+      "center": [
+        0.465,
+        -0.365,
+        0.102
+      ],
+      "size": [
+        0.263,
+        0.023,
+        0.204
+      ],
+      "yaw_deg": 15,
+      "color": "#313948",
+      "uncertainty_m": 0.12
+    },
+    {
+      "name": "Blue water bottle",
+      "shape": "capsule",
+      "a": [
+        0.615,
+        0.122,
+        0.02
+      ],
+      "b": [
+        0.615,
+        0.122,
+        0.176
+      ],
+      "radius": 0.034,
+      "color": "#559bbb",
+      "uncertainty_m": 0.12
+    },
+    {
+      "name": "Rear water bottle",
+      "shape": "capsule",
+      "a": [
+        0.686,
+        -0.035,
+        0.022
+      ],
+      "b": [
+        0.686,
+        -0.035,
+        0.17
+      ],
+      "radius": 0.031,
+      "color": "#559bbb",
+      "uncertainty_m": 0.15
+    },
+    {
+      "name": "Snack packets",
+      "shape": "box",
+      "center": [
+        0.633,
+        0.049,
+        0.021
+      ],
+      "size": [
+        0.133,
+        0.154,
+        0.082
+      ],
+      "yaw_deg": 0,
+      "color": "#d18562",
+      "uncertainty_m": 0.12
+    },
+    {
+      "name": "Rear carton",
+      "shape": "box",
+      "center": [
+        0.694,
+        -0.225,
+        0.097
+      ],
+      "size": [
+        0.079,
+        0.078,
+        0.234
+      ],
+      "yaw_deg": 0,
+      "color": "#ac886e",
+      "uncertainty_m": 0.15
+    },
+    {
+      "name": "Power adapters near tripod",
+      "shape": "box",
+      "center": [
+        0.637,
+        -0.212,
+        0.011
+      ],
+      "size": [
+        0.111,
+        0.119,
+        0.062
+      ],
+      "yaw_deg": 0,
+      "color": "#353b47",
+      "uncertainty_m": 0.13
+    },
+    {
+      "name": "USB adapter beside left laptop",
+      "shape": "box",
+      "center": [
+        0.509,
+        0.133,
+        -0.009
+      ],
+      "size": [
+        0.059,
+        0.027,
+        0.022
+      ],
+      "yaw_deg": 0,
+      "color": "#9c9ea0",
+      "uncertainty_m": 0.09
+    },
+    {
+      "name": "Tripod head",
+      "shape": "capsule",
+      "a": [
+        0.61101,
+        -0.09175,
+        0.28795
+      ],
+      "b": [
+        0.61101,
+        -0.09175,
+        0.31495
+      ],
+      "radius": 0.017,
+      "color": "#424d59",
+      "uncertainty_m": 0.065
+    },
+    {
+      "name": "Tripod leg 1",
+      "shape": "capsule",
+      "a": [
+        0.53282,
+        -0.05661,
+        -0.012
+      ],
+      "b": [
+        0.61101,
+        -0.09175,
+        0.28795
+      ],
+      "radius": 0.009,
+      "color": "#424d59",
+      "uncertainty_m": 0.11
+    },
+    {
+      "name": "Tripod leg 2",
+      "shape": "capsule",
+      "a": [
+        0.54616,
+        -0.15836,
+        -0.012
+      ],
+      "b": [
+        0.61101,
+        -0.09175,
+        0.28795
+      ],
+      "radius": 0.009,
+      "color": "#424d59",
+      "uncertainty_m": 0.11
+    },
+    {
+      "name": "Tripod leg 3",
+      "shape": "capsule",
+      "a": [
+        0.62172,
+        -0.14071,
+        -0.012
+      ],
+      "b": [
+        0.61101,
+        -0.09175,
+        0.28795
+      ],
+      "radius": 0.009,
+      "color": "#424d59",
+      "uncertainty_m": 0.11
+    },
+    {
+      "name": "Orange arm cable 1",
+      "shape": "capsule",
+      "a": [
+        -0.02597,
+        -0.30548,
+        -0.013
+      ],
+      "b": [
+        0.07333,
+        -0.30581,
+        -0.013
+      ],
+      "radius": 0.005,
+      "color": "#4b566b",
+      "uncertainty_m": 0.025
+    },
+    {
+      "name": "Orange arm cable 2",
+      "shape": "capsule",
+      "a": [
+        0.07333,
+        -0.30581,
+        -0.013
+      ],
+      "b": [
+        0.15078,
+        -0.30729,
+        -0.013
+      ],
+      "radius": 0.005,
+      "color": "#4b566b",
+      "uncertainty_m": 0.025
+    },
+    {
+      "name": "Orange arm cable 3",
+      "shape": "capsule",
+      "a": [
+        0.15078,
+        -0.30729,
+        -0.013
+      ],
+      "b": [
+        0.20869,
+        -0.29994,
+        -0.013
+      ],
+      "radius": 0.005,
+      "color": "#4b566b",
+      "uncertainty_m": 0.025
+    },
+    {
+      "name": "Orange arm cable 4",
+      "shape": "capsule",
+      "a": [
+        0.20869,
+        -0.29994,
+        -0.013
+      ],
+      "b": [
+        0.28469,
+        -0.29473,
+        -0.013
+      ],
+      "radius": 0.005,
+      "color": "#4b566b",
+      "uncertainty_m": 0.025
+    },
+    {
+      "name": "Orange arm cable 5",
+      "shape": "capsule",
+      "a": [
+        0.28469,
+        -0.29473,
+        -0.013
+      ],
+      "b": [
+        0.35161,
+        -0.30041,
+        -0.013
+      ],
+      "radius": 0.005,
+      "color": "#4b566b",
+      "uncertainty_m": 0.025
+    },
+    {
+      "name": "Loose dark lead on right 1",
+      "shape": "capsule",
+      "a": [
+        -0.01049,
+        -0.31962,
+        -0.017
+      ],
+      "b": [
+        0.07489,
+        -0.32327,
+        -0.017
+      ],
+      "radius": 0.0025,
+      "color": "#515864",
+      "uncertainty_m": 0.035
+    },
+    {
+      "name": "Loose dark lead on right 2",
+      "shape": "capsule",
+      "a": [
+        0.07489,
+        -0.32327,
+        -0.017
+      ],
+      "b": [
+        0.12215,
+        -0.31912,
+        -0.017
+      ],
+      "radius": 0.0025,
+      "color": "#515864",
+      "uncertainty_m": 0.035
+    },
+    {
+      "name": "Loose dark lead on right 3",
+      "shape": "capsule",
+      "a": [
+        0.12215,
+        -0.31912,
+        -0.017
+      ],
+      "b": [
+        0.16075,
+        -0.3291,
+        -0.017
+      ],
+      "radius": 0.0025,
+      "color": "#515864",
+      "uncertainty_m": 0.035
+    },
+    {
+      "name": "Loose dark lead on right 4",
+      "shape": "capsule",
+      "a": [
+        0.16075,
+        -0.3291,
+        -0.017
+      ],
+      "b": [
+        0.1989,
+        -0.33752,
+        -0.017
+      ],
+      "radius": 0.0025,
+      "color": "#515864",
+      "uncertainty_m": 0.035
+    },
+    {
+      "name": "Loose dark lead on right 5",
+      "shape": "capsule",
+      "a": [
+        0.1989,
+        -0.33752,
+        -0.017
+      ],
+      "b": [
+        0.24545,
+        -0.31948,
+        -0.017
+      ],
+      "radius": 0.0025,
+      "color": "#515864",
+      "uncertainty_m": 0.035
+    },
+    {
+      "name": "Loose dark lead on right 6",
+      "shape": "capsule",
+      "a": [
+        0.24545,
+        -0.31948,
+        -0.017
+      ],
+      "b": [
+        0.28068,
+        -0.3193,
+        -0.017
+      ],
+      "radius": 0.0025,
+      "color": "#515864",
+      "uncertainty_m": 0.035
+    },
+    {
+      "name": "Loose dark lead on right 7",
+      "shape": "capsule",
+      "a": [
+        0.28068,
+        -0.3193,
+        -0.017
+      ],
+      "b": [
+        0.29774,
+        -0.32545,
+        -0.017
+      ],
+      "radius": 0.0025,
+      "color": "#515864",
+      "uncertainty_m": 0.035
+    },
+    {
+      "name": "Light cables along left side 1",
+      "shape": "capsule",
+      "a": [
+        0.00899,
+        0.14866,
+        -0.014
+      ],
+      "b": [
+        0.04862,
+        0.1883,
+        -0.014
+      ],
+      "radius": 0.004,
+      "color": "#a9adb0",
+      "uncertainty_m": 0.04
+    },
+    {
+      "name": "Light cables along left side 2",
+      "shape": "capsule",
+      "a": [
+        0.04862,
+        0.1883,
+        -0.014
+      ],
+      "b": [
+        0.16317,
+        0.19073,
+        -0.014
+      ],
+      "radius": 0.004,
+      "color": "#a9adb0",
+      "uncertainty_m": 0.04
+    },
+    {
+      "name": "Light cables along left side 3",
+      "shape": "capsule",
+      "a": [
+        0.16317,
+        0.19073,
+        -0.014
+      ],
+      "b": [
+        0.22316,
+        0.18545,
+        -0.014
+      ],
+      "radius": 0.004,
+      "color": "#a9adb0",
+      "uncertainty_m": 0.04
+    },
+    {
+      "name": "Light cables along left side 4",
+      "shape": "capsule",
+      "a": [
+        0.22316,
+        0.18545,
+        -0.014
+      ],
+      "b": [
+        0.28871,
+        0.16073,
+        -0.014
+      ],
+      "radius": 0.004,
+      "color": "#a9adb0",
+      "uncertainty_m": 0.04
+    },
+    {
+      "name": "Light cables along left side 5",
+      "shape": "capsule",
+      "a": [
+        0.28871,
+        0.16073,
+        -0.014
+      ],
+      "b": [
+        0.37363,
+        0.13185,
+        -0.014
+      ],
+      "radius": 0.004,
+      "color": "#a9adb0",
+      "uncertainty_m": 0.04
+    },
+    {
+      "name": "White arm cable 1",
+      "shape": "capsule",
+      "a": [
+        0.03,
+        0.012,
+        0.15
+      ],
+      "b": [
+        0.01,
+        0.099,
+        0.135
+      ],
+      "radius": 0.0035,
+      "color": "#445669",
+      "uncertainty_m": 0.055
+    },
+    {
+      "name": "White arm cable 2",
+      "shape": "capsule",
+      "a": [
+        0.01,
+        0.099,
+        0.135
+      ],
+      "b": [
+        0.039,
+        0.109,
+        0.05
+      ],
+      "radius": 0.0035,
+      "color": "#445669",
+      "uncertainty_m": 0.055
+    },
+    {
+      "name": "White arm cable 3",
+      "shape": "capsule",
+      "a": [
+        0.039,
+        0.109,
+        0.05
+      ],
+      "b": [
+        0.02515,
+        0.09735,
+        -0.012
+      ],
+      "radius": 0.0035,
+      "color": "#445669",
+      "uncertainty_m": 0.055
+    },
+    {
+      "name": "White arm cable 4",
+      "shape": "capsule",
+      "a": [
+        0.02515,
+        0.09735,
+        -0.012
+      ],
+      "b": [
+        0.02162,
+        0.05424,
+        -0.012
+      ],
+      "radius": 0.0035,
+      "color": "#445669",
+      "uncertainty_m": 0.055
+    },
+    {
+      "name": "Tripod-side cable bundle 1",
+      "shape": "capsule",
+      "a": [
+        0.4,
+        -0.3,
+        -0.015
+      ],
+      "b": [
+        0.49,
+        -0.23,
+        -0.016
+      ],
+      "radius": 0.007,
+      "color": "#454c56",
+      "uncertainty_m": 0.12
+    },
+    {
+      "name": "Tripod-side cable bundle 2",
+      "shape": "capsule",
+      "a": [
+        0.49,
+        -0.23,
+        -0.016
+      ],
+      "b": [
+        0.55,
+        -0.2,
+        -0.015
+      ],
+      "radius": 0.007,
+      "color": "#454c56",
+      "uncertainty_m": 0.12
+    },
+    {
+      "name": "Tripod-side cable bundle 3",
+      "shape": "capsule",
+      "a": [
+        0.55,
+        -0.2,
+        -0.015
+      ],
+      "b": [
+        0.65,
+        -0.18,
+        -0.015
+      ],
+      "radius": 0.007,
+      "color": "#454c56",
+      "uncertainty_m": 0.12
+    },
+    {
+      "name": "Left laptop cable bundle 1",
+      "shape": "capsule",
+      "a": [
+        0.39,
+        0.18,
+        -0.013
+      ],
+      "b": [
+        0.49,
+        0.14,
+        -0.014
+      ],
+      "radius": 0.006,
+      "color": "#454c56",
+      "uncertainty_m": 0.11
+    },
+    {
+      "name": "Left laptop cable bundle 2",
+      "shape": "capsule",
+      "a": [
+        0.49,
+        0.14,
+        -0.014
+      ],
+      "b": [
+        0.56,
+        0.07,
+        -0.014
+      ],
+      "radius": 0.006,
+      "color": "#454c56",
+      "uncertainty_m": 0.11
+    },
+    {
+      "name": "Left laptop cable bundle 3",
+      "shape": "capsule",
+      "a": [
+        0.56,
+        0.07,
+        -0.014
+      ],
+      "b": [
+        0.64,
+        0.12,
+        -0.014
+      ],
+      "radius": 0.006,
+      "color": "#454c56",
+      "uncertainty_m": 0.11
+    }
+  ],
+  "survey": {
+    "notes": [
+      "Scene camera and right-base XY/yaw fitted from tip projections in the fixed camera. Bases assumed coplanar and upright. Focal length weakly regularized. No lens distortion fit.",
+      "Table height inherited from the local collision model and checked visually during the low right-tip pass. No contact measurement. Far table boundaries are estimated.",
+      "Visible tabletop points back-projected to the table plane. Occluded depth, object height, and wrist-only objects use visual estimates. Cables are piecewise approximations.",
+      "Mounted camera centers estimated from projected features across arm poses. Extents and orientation are approximate. Arm capsules are approximations from collide.py.",
+      "Uncertainties are rough positional allowances, not statistical bounds. Movable objects and cables can shift. People, a briefly hand-held tool, and the distant background are outside the static map.",
+      "At rest, the modeled tip projects 36 px (left) and 27 px (right) from the apparent jaw ends in the 800 px scene image. The calibration fit error reflects the sampled working poses only."
+    ],
+    "scene_camera_fit_rmse_px": 2.58,
+    "tip_samples": [
+      {
+        "side": "left",
+        "tip_in_arm_base": [
+          0.21801,
+          -5e-05,
+          0.1002
+        ],
+        "scene_pixel": [
+          494,
+          157
+        ]
+      },
+      {
+        "side": "left",
+        "tip_in_arm_base": [
+          0.2515,
+          -1e-05,
+          0.10109
+        ],
+        "scene_pixel": [
+          502,
+          180
+        ]
+      },
+      {
+        "side": "left",
+        "tip_in_arm_base": [
+          0.25036,
+          0.03009,
+          0.10017
+        ],
+        "scene_pixel": [
+          552,
+          180
+        ]
+      },
+      {
+        "side": "left",
+        "tip_in_arm_base": [
+          0.25111,
+          0.02831,
+          0.07033
+        ],
+        "scene_pixel": [
+          542,
+          219
+        ]
+      },
+      {
+        "side": "left",
+        "tip_in_arm_base": [
+          0.25016,
+          0.02816,
+          0.03913
+        ],
+        "scene_pixel": [
+          536,
+          256
+        ]
+      },
+      {
+        "side": "left",
+        "tip_in_arm_base": [
+          0.28197,
+          0.02898,
+          0.04096
+        ],
+        "scene_pixel": [
+          548,
+          282
+        ]
+      },
+      {
+        "side": "left",
+        "tip_in_arm_base": [
+          0.28198,
+          0.02812,
+          0.07368
+        ],
+        "scene_pixel": [
+          552,
+          242
+        ]
+      },
+      {
+        "side": "right",
+        "tip_in_arm_base": [
+          0.2151,
+          -0.00095,
+          0.09131
+        ],
+        "scene_pixel": [
+          174,
+          169
+        ]
+      },
+      {
+        "side": "right",
+        "tip_in_arm_base": [
+          0.25099,
+          -0.00113,
+          0.09974
+        ],
+        "scene_pixel": [
+          155,
+          190
+        ]
+      },
+      {
+        "side": "right",
+        "tip_in_arm_base": [
+          0.25001,
+          0.0289,
+          0.09937
+        ],
+        "scene_pixel": [
+          214,
+          190
+        ]
+      },
+      {
+        "side": "right",
+        "tip_in_arm_base": [
+          0.25015,
+          0.02705,
+          0.06929
+        ],
+        "scene_pixel": [
+          215,
+          227
+        ]
+      },
+      {
+        "side": "right",
+        "tip_in_arm_base": [
+          0.25056,
+          0.02785,
+          0.03908
+        ],
+        "scene_pixel": [
+          217,
+          264
+        ]
+      },
+      {
+        "side": "right",
+        "tip_in_arm_base": [
+          0.24888,
+          0.0269,
+          0.01765
+        ],
+        "scene_pixel": [
+          225,
+          287
+        ]
+      }
+    ],
+    "rest_pose_validation_px": {
+      "left": 36.3,
+      "right": 26.5
+    }
+  }
+}
