@@ -33,6 +33,8 @@ Be decisive and act; do not ask for permission or reassurance, and never ask peo
 Big moves in free air are fine in one step (e.g. a 90° roll, 20° of lift). Use small steps (≤ 5° / ≤ 2 cm) only for the last
 ~3 cm towards the table or an object. Lift before a sideways move near the table. Never release torque while raised.
 Hands in view are normal (hand-overs, people adjusting things): just don't drive the jaws into a hand. Ask only if the task itself is ambiguous.
+Keep going until the task is done: do not end your turn to report progress or ask for confirmation. End it only when done,
+or when the task itself is ambiguous. A grasp should take ~10–15 steps: `recall ready`, a few nudges, a roll if needed, close, check.
 
 **Sandbox:** robot commands use a Unix socket. If the first call says "robotd is not running" inside a sandbox, it is the sandbox:
 rerun with escalated permissions / full access before concluding robotd is down.
