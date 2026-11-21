@@ -29,6 +29,7 @@ robot cams                       # which cameras deliver (unplugged = grey tile 
 robot cam scene [k=v ...|reset]  # V4L2 controls (exposure, gain, focus, …), saved in cams.json, re-applied on replug
 robot view [cam ...]             # live video window, all cameras side by side (through robotd)
 robot stream [port]              # same as a web page (MJPEG, :8101)
+                                 # page has a "camera settings" panel (same as robot cam; open directly with /#settings)
                                  # share: `tailcat serve exec -- socat - TCP:127.0.0.1:8101`, viewers `tailcat browse <addr>`
 robot raw "move right_elbow_flex -5; wait; snap"   # raw protocol; ';' chains, wait = until settled
 .venv/bin/python tui.py          # keyboard panel + live camera (v); shared as quack session so101-tui

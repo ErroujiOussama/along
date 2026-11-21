@@ -105,13 +105,32 @@ def stream(names, port):
         def log_message(self, *a):
             pass
 
+        def send(self, body, ctype):
+            self.send_response(200); self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
         def do_GET(self):
-            if self.path != "/stream":
-                body = (b"<html><title>so101</title><body style='margin:0;background:#111;color:#ccc;font:14px sans-serif'>"
-                        b"<p style='margin:6px'>so101 cameras: left wrist (icSpring) | right wrist (Sonix) | scene (C920)</p>"
-                        b"<img src='/stream' style='width:100%'></body></html>")
-                self.send_response(200); self.send_header("Content-Type", "text/html")
-                self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
+            from urllib.parse import urlparse, parse_qsl
+            u = urlparse(self.path)
+            if u.path == "/ctl":            # camera settings, through robotd (camctl): ?cam=scene&k=v | &reset=1
+                q = dict(parse_qsl(u.query))
+                try:
+                    with Robot() as r:
+                        if "cam" in q:
+                            cam = q.pop("cam")
+                            out = r.camctl(cam, reset="reset" in q, **{k: int(v) for k, v in q.items() if k != "reset"})
+                        else:
+                            out = {}
+                            for c in r.cams():
+                                try:
+                                    out[c] = r.camctl(c)
+                                except RobotError as e:
+                                    out[c] = {"error": str(e)}
+                except Exception as e:
+                    out = {"error": str(e)}
+                return self.send(json.dumps(out).encode(), "application/json")
+            if u.path != "/stream":
+                return self.send(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "stream.html"), "rb").read(), "text/html")
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=f"); self.end_headers()
             try:
