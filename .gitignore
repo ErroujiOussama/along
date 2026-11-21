@@ -9,3 +9,7 @@ sim_poses.json
 .plan_sim.jpg
 rollouts/
 scan.jpg
+.env
+.along_*
+*.pt
+!along_world.pt

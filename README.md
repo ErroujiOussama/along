@@ -40,6 +40,16 @@ robot raw "move right_elbow_flex -5; wait; snap"   # raw protocol; ';' chains, w
 systemctl --user stop robotd     # park at rest, release torque
 ```
 
+## Along (voice helper)
+
+```bash
+along idle      # once, with the table in its idle state: what the detector (YOLO-World, along_world.pt) may ignore
+along run       # idle until a new object shows up ~1.5 s, then: C920 mic -> ElevenLabs STT -> Codex (tmux `along`,
+                # persona prompts/along.md) -> robot + `along say` (ElevenLabs TTS); back to idle after a quiet minute
+along see · along say "hi" · along tell "[voice] hold this"   # detections · speak · type into the Codex session
+```
+Key: `ELEVENLABS_API_KEY` in `.env`. Watch the agent: `tmux attach -t along`.
+
 ```python
 from so101 import Robot
 bot = Robot()
