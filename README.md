@@ -90,8 +90,3 @@ Signs: see the joint table in AGENTS.md (right-arm pan still unconfirmed).
 - Leaving rest: raise shoulder_lift ≥ 10° first, then elbow, then wrist; blind moves drag the gripper on the table.
 - `goto` from rest fails (first IK step jumps ~37°): jog to a pointing-down pose, `save ready_<side>`, `goto` from there.
 - Never use LeRobot `max_relative_target`: it clips goals to present ±N°, so loaded joints (elbow) never get enough torque.
-
-## Next: grasping
-
-Per arm, `goto` 4–5 table points at z≈0.01, snap each, fit `cv2.findHomography(tip_pixels, robot_xy)`.
-Then: object pixel → xy → hover z=0.08 → open → z≈0.015 → close → lift → confirm in a snap.

@@ -1,7 +1,7 @@
 # systemd user service for robotd. Install: ln -sf $PWD/robotd.service ~/.config/systemd/user/ && systemctl --user daemon-reload
 # Deliberately no [Install]: never autostarts; start it with the arms at rest.
 [Unit]
-Description=SO-101 robotd (sole owner of both arms + camera)
+Description=SO-101 robotd (sole owner of both arms + cameras)
 StartLimitIntervalSec=60
 StartLimitBurst=4
 

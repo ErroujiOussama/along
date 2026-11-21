@@ -9,7 +9,7 @@
     bot.left.goto(0.20, 0.0, 0.08)    # straight Cartesian line (m, arm base frame), gripper down
     bot.left.pose()                   # {'shoulder_pan': 1.2, ...} measured
     bot.left.tip()                    # forward kinematics of the measured pose (m)
-    bot.snap()                        # both wrist cameras -> {'left': 'snap_left.jpg', 'right': ...}
+    bot.snap()                        # all connected cameras -> {'left': 'snap_left.jpg', ..., 'scene': ...}
     bot.step("move right_elbow_flex -5")  # raw cmds, wait, one small mosaic -> {'ran', 'state', 'image', 'missing_cams'}
     bot.snap_all()                    # all cameras side by side, 400x225 each -> snap_all.jpg; bot.mosaic() -> numpy BGR
     bot.right.holding()               # gripper closed on something (stopped >= 5 short of a target <= 10)
