@@ -531,7 +531,7 @@ def client(conn):
                 continue
             try:
                 reply = {"ok": True, **handle(parts)}
-                if parts[0] not in ("state", "limits", "poses", "thumb", "cams"):
+                if parts[0] not in ("state", "limits", "poses", "thumb", "cams") and parts[:1] + parts[2:] != ["camctl"]:   # quiet polls
                     log(" ".join(parts) + " -> " + json.dumps(reply)[:200])
             except Exception as e:
                 reply = {"ok": False, "error": str(e)}

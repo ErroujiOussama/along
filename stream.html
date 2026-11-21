@@ -17,10 +17,20 @@ button:hover{border-color:var(--acc)} img{width:100%;display:block}
 </style></head><body>
 <header><b>so101 cameras</b><span>left wrist (icSpring) · right wrist (Sonix) · scene (C920)</span>
 <button id="tog">camera settings</button><span id="msg"></span></header>
-<img src="/stream" alt="live camera mosaic">
+<img id="cam" alt="live camera mosaic">
 <div id="ctl"></div>
 <script>
-const ctl = document.getElementById('ctl'), msg = document.getElementById('msg');
+const ctl = document.getElementById('ctl'), msg = document.getElementById('msg'), cam = document.getElementById('cam');
+(async function video() {   // poll single frames: survives hiccups, no refresh needed
+  for (;;) {
+    const t = performance.now();
+    try {
+      const r = await fetch('/frame.jpg?' + t, {cache: 'no-store'});
+      if (r.ok) { const url = URL.createObjectURL(await r.blob()), old = cam.src; cam.src = url; if (old.startsWith('blob:')) URL.revokeObjectURL(old); }
+    } catch (e) { await new Promise(r => setTimeout(r, 1000)); }
+    await new Promise(r => setTimeout(r, Math.max(0, 80 - (performance.now() - t))));
+  }
+})();
 const HINT = {auto_exposure: '1 = manual, 3 = auto', power_line_frequency: '1 = 50 Hz, 2 = 60 Hz'};
 document.getElementById('tog').onclick = () => { ctl.classList.toggle('open'); if (ctl.classList.contains('open')) load(); };
 if (location.hash === '#settings') { ctl.classList.add('open'); load(); }

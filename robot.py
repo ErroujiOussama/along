@@ -129,19 +129,28 @@ def stream(names, port):
                 except Exception as e:
                     out = {"error": str(e)}
                 return self.send(json.dumps(out).encode(), "application/json")
+            if u.path == "/frame.jpg":      # newest mosaic as one JPEG; the page polls this (works in every browser)
+                with lock:
+                    jpg = latest[0]
+                self.send_response(200); self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(jpg)))
+                self.end_headers(); self.wfile.write(jpg); return
             if u.path != "/stream":
                 return self.send(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "stream.html"), "rb").read(), "text/html")
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=f"); self.end_headers()
+            t0, n = time.time(), 0
+            print(f"viewer + {self.client_address[0]}", flush=True)
             try:
                 while True:
+                    n += 1
                     with lock:
                         jpg = latest[0]
                     if jpg:
                         self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(jpg) + jpg + b"\r\n")
                     time.sleep(1 / 12)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+            except Exception as e:
+                print(f"viewer - after {time.time() - t0:.0f} s, {n} frames: {type(e).__name__}", flush=True)
 
     threading.Thread(target=grab, daemon=True).start()
     print(f"streaming on http://127.0.0.1:{port}/  (share: tailcat serve {port})", flush=True)
