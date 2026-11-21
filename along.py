@@ -164,7 +164,7 @@ def codex_up():
         return
     log("starting Codex in tmux session", TMUX)
     tmux("new-session", "-d", "-s", TMUX, "-x", "200", "-y", "50", "-c", HERE,
-         *CODEX, "Read prompts/along.md and AGENTS.md, then wait for the first [along] or [voice] message. Don't speak yet.")
+         *CODEX, "Read prompts/along.md and AGENTS.md, then reply \"ready\" and end your turn (messages arrive as new turns). Don't speak yet.")
     t0, last = time.time(), ""
     while time.time() - t0 < 120:                          # idle = screen unchanged for 6 s after the first turn
         time.sleep(3)
