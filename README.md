@@ -43,15 +43,14 @@ systemctl --user stop robotd     # park at rest, release torque
 ## Along (voice helper)
 
 ```bash
-along run       # daemon: C920 mic -> Silero VAD -> ElevenLabs STT -> Codex (tmux `along`, persona prompts/along.md)
-                # -> robot + `along say` (ElevenLabs TTS). Mic only while switched on:
-along on · along off   # (or the buttons on /along). With OPENAI_API_KEY in .env the voice is GPT-Live (speech-to-speech):
-                       # it delegates requests to Codex as [voice] lines and speaks what Codex `along say`s
+along run       # daemon: GPT-Live voice (speech-to-speech, C920 mic) while switched on; it hands robot/vision
+                # requests to Codex (tmux `along`, brief prompts/along.md) and speaks Codex's final reply
+along on · along off   # (or the buttons on /along); off parks the free arms
 along hold|release|turn|tilt|press|park ...   # one-call skills Codex uses (see along.py --help)
 along run --yolo       # instead: wake on a new thing in the centre of the table (`along idle` first, table empty)
-along look "where is the toothbrush?" · along see · along say "hi" · along tell "[voice] hold this"   # detections · speak · type into the Codex session
+along look "where is the toothbrush?" · along see · along tell "[voice] hold this"   # vision · detections · type into the Codex session
 ```
-Key: `ELEVENLABS_API_KEY` in `.env`. Watch the agent: `tmux attach -t along`; debug page `robot stream` → `/along`
+Key: `OPENAI_API_KEY` in `.env`. Watch the agent: `tmux attach -t along`; debug page `robot stream` → `/along`
 (detector boxes, state, conversation, Codex pane, type-as-voice, force wake).
 
 ```python

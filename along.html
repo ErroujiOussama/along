@@ -69,7 +69,7 @@ async function poll() {
     const age = s ? d.now - s.t : null;
     $('chips').innerHTML = chip(d.daemon ? 'daemon running' : 'daemon stopped', d.daemon ? 'on' : 'bad')
       + (s ? chip(s.active ? 'ACTIVE' : 'idle', s.active ? 'on' : '') + chip(s.listening ? 'mic on' : 'mic off', s.listening ? 'on' : '')
-           + chip(s.speaking ? 'speaking (mic muted)' : 'silent', s.speaking ? 'warn' : '')
+           + chip(s.speaking ? 'Along talking (mic muted)' : 'silent', s.speaking ? 'warn' : '')
            + chip('new-object hits ' + (s.hits || []).filter(Boolean).length + '/4 (3 wakes)', '') : '')
       + chip(d.codex === null ? 'no Codex session' : 'Codex up', d.codex === null ? '' : 'on');
     const b = $('banner'), why = (s?.why || []).join(', ');

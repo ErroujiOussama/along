@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """along — voice helper around the arms. Idle: only a cheap detector watches the scene camera.
-Active (mic on, Silero VAD -> ElevenLabs speech-to-text) only while an object of interest is there: a new object (not in
+Voice = GPT-Live (speech-to-speech; it hands robot/vision work to Codex) only while switched on (or, with --yolo, while an object of interest is there: a new object (not in
 the idle baseline, 3 of 4 frames to start, kept 8 s after it was last seen) or an arm holding/offering. What you say goes to
-one long-running Codex session (tmux "along", persona prompts/along.md) which acts with `robot` and talks with `along say`.
+one long-running Codex session (tmux "along", persona prompts/along.md) which acts with `robot`; its final message is spoken.
 
   along run              the daemon (mic + Codex bridge), switched by hand: along on / along off (or /along buttons)
   along run --yolo       instead wake on the scene camera (new thing in the centre of the table)
@@ -10,20 +10,20 @@ one long-running Codex session (tmux "along", persona prompts/along.md) which ac
   along see              latest detections (label, conf, scene px in the 800x450 tile for `robot locate`)
   along look "question"  ask GPT 6.1 terra about the current scene + wrist frames (~5 s): what is where, orientation,
                          is it between the jaws. Scene px answers fit `robot locate`.
-  along say "text"       speak (ElevenLabs; espeak-ng without a key); the mic is muted meanwhile
+  along say "text"       have GPT-Live say this (only while switched on)
   along tell "text"      send a line to the Codex session (what the daemon does with speech)
   along held left toothbrush | along held left none    record what an arm holds (keeps along active; shown on /along)
   along wake             force the running daemon awake (debugging)
 Skills (one call per request; each ends with a robot step: state lines + snap_all.jpg):
   along hold <side> [what] [flat] [x y z]   offer + wait + close + record (+ speech); flat = jaws up/down
-  along release <side>   open, then recall ready (+ "Releasing.")
+  along release <side>   open, then recall ready
   along turn <side> <deg> | along tilt <side> <deg>   wrist roll | wrist flex (+ tips down)
   along press <side> x y z [cm]   push straight down on a point (pump, button), default 4 cm past it, back up
   along park             arms holding nothing -> rest
 Debug page: `robot stream` -> http://localhost:8101/along (boxes, state, conversation, Codex pane, type-as-voice).
-Keys: ELEVENLABS_API_KEY in the environment or in .env (repo). Optional ALONG_VOICE (voice id), ALONG_MIC (pw source; default the C920 mic).
+Key: OPENAI_API_KEY in the environment or in .env (repo). Optional ALONG_MIC (pw source; default the C920 mic).
 """
-import json, os, subprocess, sys, threading, time, wave, io
+import json, os, subprocess, sys, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 SEEN, IDLE, MUTE = f"{HERE}/.along_seen.json", f"{HERE}/along_idle.json", f"{HERE}/.along_mute"
 HELD = f"{HERE}/.along_held.json"                        # {"left": "toothbrush"}: what each arm holds (set by the agent)
@@ -64,32 +64,12 @@ def event(kind, text=""):
 
 # ---------------------------------------------------------------- speech
 def say(text):
+    """GPT-Live is the only voice: while a session is up it speaks this; otherwise it is only logged."""
     event("say", text)
-    if os.path.exists(f"{HERE}/.along_live"):               # GPT-Live session up: it speaks this (its own voice)
+    if os.path.exists(f"{HERE}/.along_live"):
         with open(f"{HERE}/.along_live_out.jsonl", "a") as f:
             f.write(json.dumps({"text": text}) + "\n")
-        return
-    if env("ALONG_VOICE_BACKEND", "live") == "live":         # GPT-Live is the only voice: off = silent, logged only
-        return
-    key = env("ELEVENLABS_API_KEY")
-    open(MUTE, "w").write(str(time.time() + 30))
-    try:
-        if key:
-            import requests
-            r = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{env('ALONG_VOICE', 'JBFqnCBsd6RMkjVDRZzb')}/stream",
-                              params={"output_format": "mp3_44100_128"}, headers={"xi-api-key": key},
-                              json={"text": text, "model_id": "eleven_flash_v2_5"}, timeout=20, stream=True)
-            r.raise_for_status()                           # play while it streams in
-            p = subprocess.Popen(["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "-"], stdin=subprocess.PIPE,
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            for chunk in r.iter_content(4096):
-                p.stdin.write(chunk)
-            p.stdin.close(); p.wait()
-        else:
-            subprocess.run(["espeak-ng", "-s", "165", text])
-    finally:
-        open(MUTE, "w").write(str(time.time() + 0.4))   # room echo
-        open(f"{HERE}/.along_spoke", "w").write(str(time.time()))
+    open(f"{HERE}/.along_spoke", "w").write(str(time.time()))
 
 
 def chime(freq=660, dur=0.12):
@@ -97,18 +77,6 @@ def chime(freq=660, dur=0.12):
     open(MUTE, "w").write(str(time.time() + dur + 0.3))
     subprocess.run(["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "-f", "lavfi", "-i",
                     f"sine=frequency={freq}:duration={dur}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def transcribe(pcm, rate=16000):
-    import requests
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(pcm)
-    r = requests.post("https://api.elevenlabs.io/v1/speech-to-text", headers={"xi-api-key": env("ELEVENLABS_API_KEY")},
-                   data={"model_id": "scribe_v1", "tag_audio_events": "false"},
-                   files={"file": ("u.wav", buf.getvalue(), "audio/wav")}, timeout=30)
-    r.raise_for_status()
-    return r.json().get("text", "").strip()
 
 
 def muted():
@@ -124,77 +92,6 @@ def spoke_left(window=20.0):
         return max(0.0, round(window - (time.time() - float(open(f"{HERE}/.along_spoke").read())), 1))
     except (FileNotFoundError, ValueError):
         return 0.0
-
-
-def addressed(text, window=20.0):
-    """Busy room: only speech that names Along, or comes within `window` s after Along last spoke (a reply), counts."""
-    import re
-    if re.search(r"\b(along|a long|alone|alon)\b", text, re.I):
-        return True
-    try:
-        return time.time() - float(open(f"{HERE}/.along_spoke").read()) < window
-    except (FileNotFoundError, ValueError):
-        return False
-
-
-class Mic:
-    """Silero VAD on 16 kHz mono from PipeWire. Calls on_text(text) per utterance while self.on is set."""
-    def __init__(self, on_text):
-        self.on, self.on_text, self.phase, self.prob, self.stt_busy = threading.Event(), on_text, "starting", 0.0, False
-        threading.Thread(target=self.loop, daemon=True).start()
-
-    def loop(self):
-        import numpy as np
-        cmd = ["pw-record", "--raw", "--rate", "16000", "--channels", "1", "--format", "s16"]   # raw: a pipe gets AU (big-endian) otherwise
-        mic = env("ALONG_MIC") or next((l.split()[1] for l in subprocess.run(["pactl", "list", "short", "sources"],
-              capture_output=True, text=True).stdout.splitlines() if "C920" in l and "input" in l), None)
-        if mic:
-            cmd += ["--target", mic]
-        log("mic:", mic or "default source")
-        p = subprocess.Popen(cmd + ["-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        import torch
-        from silero_vad import load_silero_vad
-        vad = load_silero_vad()
-        speech, quiet, pre = [], 0, []
-        while True:
-            chunk = p.stdout.read(1024)                    # 512 samples = 32 ms (Silero's window)
-            if len(chunk) < 1024:
-                log("mic: pw-record ended"); return
-            if not self.on.is_set() or muted():            # gated: nothing of interest in the scene / we are talking
-                self.phase, self.prob = ("muted" if self.on.is_set() else "off"), 0.0
-                if speech or pre:
-                    vad.reset_states()
-                speech, quiet, pre = [], 0, []; continue
-            prob = vad(torch.from_numpy(np.frombuffer(chunk, np.int16).astype(np.float32) / 32768), 16000).item()
-            self.prob, self.phase = prob, ("speech" if speech or prob > 0.6 else "listening")
-            if not speech:
-                pre = (pre + [chunk])[-8:]
-                if prob > 0.6:
-                    speech, quiet = pre[:], 0
-                continue
-            speech.append(chunk); quiet = 0 if prob > 0.35 else quiet + 1
-            if quiet > 22 or len(speech) > 470:            # 0.7 s without speech / 15 s max
-                pcm, speech = b"".join(speech), []
-                if len(pcm) > 16000 * 2 * 0.6:
-                    chime(440)
-                    threading.Thread(target=self.stt, args=(pcm,), daemon=True).start()
-
-    def stt(self, pcm):
-        self.stt_busy = True
-        try:
-            t = transcribe(pcm)
-        except Exception as e:
-            log("stt error", e); event("error", f"stt: {e}"); return
-        finally:
-            self.stt_busy = False
-        log("heard:", repr(t))
-        if t and addressed(t):
-            event("heard", t)
-        if len(t.strip(" .,!?")) <= 1 or (t.startswith("(") and t.endswith(")")):      # "(music)" etc.
-            return
-        if not addressed(t):
-            event("ignored", t); return
-        self.on_text(t)
 
 
 
@@ -494,28 +391,26 @@ def run_manual():
     def heard(text):
         nonlocal last_voice
         last_voice = time.time()
-        if live:
-            event("heard", text)
+        event("heard", text)
         tell(f"[voice] {text}")
-    live = bool(env("OPENAI_API_KEY")) and env("ALONG_VOICE_BACKEND", "live") == "live"
-    mic = LiveVoice(heard) if live else Mic(heard)
+    if not env("OPENAI_API_KEY"):
+        sys.exit("OPENAI_API_KEY missing (.env): GPT-Live is the voice")
+    mic = LiveVoice(heard)
     threading.Thread(target=relay_replies, daemon=True).start()
     if not env("ALONG_DRY"):
         codex_up()
-    log(f"off ({'GPT-Live' if live else 'ElevenLabs'} voice); waiting for `along on`")
+    log("off (GPT-Live voice); waiting for `along on`")
     while True:
         t, want = time.time(), os.path.exists(ON)
         if want and not on:
             on = True; log("ON"); event("wake", "switched on")
-            if not live:
-                say("Hi, I'm Along. Need a hand?")
             chime(880); mic.on.set()
         elif on and not want:
             on = False; mic.on.clear(); log("OFF"); event("idle", "switched off")
             threading.Thread(target=skill, args=(["park"],), daemon=True).start()   # no Codex turn needed
         json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
                    "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
-                   "voice": "GPT-Live" if live else "ElevenLabs", "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice}, open(SEEN, "w"))
+                   "voice": "GPT-Live", "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice}, open(SEEN, "w"))
         time.sleep(0.2)
 
 
@@ -528,10 +423,8 @@ def run():
 
     def heard(text):
         nonlocal last_voice
-        last_voice = time.time(); tell(f"[voice] {text}")
-    mic = Mic(heard)
-    if not env("ELEVENLABS_API_KEY"):
-        log("no ELEVENLABS_API_KEY: speech-to-text off, say uses espeak-ng")
+        last_voice = time.time(); event("heard", text); tell(f"[voice] {text}")
+    mic = LiveVoice(heard)
     if not env("ALONG_DRY"):
         codex_up()                                         # warm, so waking up is instant
     log("idle; watching the scene")
