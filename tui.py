@@ -40,12 +40,16 @@ def init_colors():
         return False
 
 
-def draw_cam(scr, r, y0, x0, w, h, color):
+def draw_cam(scr, r, side, y0, x0, w, h, color):
     """Camera frame, one pixel per cell; cells are ~2x taller than wide, so sample 16:9 at w x h with w ~ 3.5 h."""
+    put_at(scr, y0, x0, f"{side} wrist camera"[:w], curses.A_BOLD); y0 += 1; h -= 1
     w, h = min(w, int(h * 3.55)), min(h, int(w / 3.55))
     if w < 8 or h < 3:
         return
-    img = r.thumb(w, h)
+    try:
+        img = r.thumb(side, w, h)
+    except Exception as e:
+        put_at(scr, y0, x0, str(e)[:w]); return
     for y in range(h):
         for x in range(w):
             b, g, rr = (int(v) for v in img[y, x])
@@ -57,6 +61,13 @@ def draw_cam(scr, r, y0, x0, w, h, color):
                     scr.addstr(y0 + y, x0 + x, RAMP[(rr * 3 + g * 6 + b) // 10 * (len(RAMP) - 1) // 255])
             except curses.error:
                 pass
+
+
+def put_at(scr, y, x, text, attr=0):
+    try:
+        scr.addstr(y, x, text, attr)
+    except curses.error:
+        pass
 
 
 def ask(scr, prompt):
@@ -101,13 +112,14 @@ def main(scr):
             put(scr, 3 + i, txt, curses.A_REVERSE if i == sel else 0)
         if cam and st:
             H, W = scr.getmaxyx()
-            try:
-                if W - 50 >= 30:      # beside the table
-                    draw_cam(scr, r, 2, 48, W - 49, H - 3, color)
-                else:                 # below it
-                    draw_cam(scr, r, 3 + len(JOINTS) + 1, 0, W - 1, H - len(JOINTS) - 6, color)
-            except Exception as e:
-                put(scr, H - 1, f"camera: {e}")
+            if W - 50 >= 30:      # beside the table: left camera above right camera
+                ch_ = (H - 3) // 2
+                draw_cam(scr, r, "left", 2, 48, W - 49, ch_, color)
+                draw_cam(scr, r, "right", 2 + ch_, 48, W - 49, ch_, color)
+            else:                 # below the table, side by side
+                y0, cw = 3 + len(JOINTS) + 1, (W - 2) // 2
+                draw_cam(scr, r, "left", y0, 0, cw, H - y0 - 2, color)
+                draw_cam(scr, r, "right", y0, cw + 1, cw, H - y0 - 2, color)
         scr.refresh()
         ch = scr.getch()
         if ch == -1:
@@ -132,7 +144,7 @@ def main(scr):
             elif ch == ord("c") and r:
                 getattr(r, side).close(wait=False); status = f"close {side}"
             elif ch == ord("s") and r:
-                status = f"snap {r.snap()}"
+                status = "snap " + " ".join(r.snap().values())
             elif ch == ord("h") and r:
                 r.home(wait=False); status = "going home"
             elif ch == ord("v"):

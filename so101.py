@@ -9,8 +9,9 @@
     bot.left.goto(0.20, 0.0, 0.08)    # straight Cartesian line (m, arm base frame), gripper down
     bot.left.pose()                   # {'shoulder_pan': 1.2, ...} measured
     bot.left.tip()                    # forward kinematics of the measured pose (m)
-    bot.snap()                        # -> path of a fresh camera frame;  bot.frame() -> numpy BGR image
-    bot.thumb(80, 45)                 # small live frame as numpy BGR (what the panel's camera view uses)
+    bot.snap()                        # both wrist cameras -> {'left': 'snap_left.jpg', 'right': ...}
+    bot.left.frame()                  # newest left wrist-camera frame as numpy BGR; bot.left.snap() -> path
+    bot.left.thumb(80, 45)            # small live frame (what the panel's camera view uses)
     bot.save("ready"); bot.recall("ready", side="left")
     bot.stop(); bot.home()
     bot.left.torque(False)            # limp for hand-guiding (hold it!); bot.left.torque(True) holds the new pose
@@ -109,17 +110,20 @@ class Robot:
     def speed(self, deg_per_s):
         return self.call(f"speed {deg_per_s}")["vel"]
 
-    def snap(self, path=None):
-        return self.call("snap" + (f" {path}" if path else ""))["path"]
+    def snap(self, side=None, path=None):
+        """Write the newest wrist-camera frames. side=None: both -> {side: path}; side given -> path."""
+        if side is None:
+            return self.call("snap")["paths"]
+        return self.call(f"snap {side}" + (f" {path}" if path else ""))["paths"][side]
 
-    def frame(self):
+    def frame(self, side):
         import cv2
-        return cv2.imread(self.snap())
+        return cv2.imread(self.snap(side))
 
-    def thumb(self, w, h):
-        """Newest camera frame resized to w x h, as a numpy BGR array (cheap; for live previews)."""
+    def thumb(self, side, w, h):
+        """Newest frame of one wrist camera resized to w x h, as numpy BGR (cheap; for live previews)."""
         import base64, numpy as np
-        r = self.call(f"thumb {w} {h}")
+        r = self.call(f"thumb {side} {w} {h}")
         return np.frombuffer(base64.b64decode(r["bgr"]), np.uint8).reshape(r["h"], r["w"], 3)
 
     def save(self, name):
@@ -182,6 +186,15 @@ class Arm:
 
     def torque(self, on):
         self.robot.torque(on, self.side)
+
+    def snap(self, path=None):
+        return self.robot.snap(self.side, path)
+
+    def frame(self):
+        return self.robot.frame(self.side)
+
+    def thumb(self, w, h):
+        return self.robot.thumb(self.side, w, h)
 
     def __repr__(self):
         return f"Arm({self.side}, {self.pose()})"

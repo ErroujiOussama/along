@@ -1,1 +1,16 @@
-{}
+{
+ "rest": {
+  "left_shoulder_pan": 2.42,
+  "left_shoulder_lift": -101.93,
+  "left_elbow_flex": 96.62,
+  "left_wrist_flex": 27.56,
+  "left_wrist_roll": -0.66,
+  "left_gripper": 2.81,
+  "right_shoulder_pan": -5.54,
+  "right_shoulder_lift": -93.36,
+  "right_elbow_flex": 96.53,
+  "right_wrist_flex": 12.4,
+  "right_wrist_roll": 0.13,
+  "right_gripper": 2.98
+ }
+}

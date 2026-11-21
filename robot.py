@@ -10,7 +10,8 @@
   robot tip left                         gripper tip position (m) from the measured pose
   robot save ready | recall ready [left|right] | poses
   robot torque off left | torque on [all]   limp for hand-guiding (HOLD THE ARM) / hold the new pose
-  robot stop | home | snap | limits | speed 30
+  robot snap [left|right] [path]         wrist-camera frames (default both: snap_left.jpg, snap_right.jpg)
+  robot stop | home | limits | speed 30
   robot raw "move left_elbow_flex -5; wait; snap"   raw robotd protocol, ';' chains, wait = until settled
   robot shutdown [here]                  release torque after going home (or right here)
 
@@ -103,7 +104,11 @@ def main(argv):
     elif cmd == "limits":
         print(json.dumps(bot.limits(), indent=1)); return
     elif cmd == "snap":
-        print(bot.snap(a[1] if len(a) > 1 else None)); return
+        if len(a) > 1:
+            print(bot.snap(side(a), a[2] if len(a) > 2 else None))
+        else:
+            print("\n".join(f"{s}: {p}" for s, p in bot.snap().items()))
+        return
     elif cmd == "speed":
         print(f"{bot.speed(float(a[1]))} deg/s"); return
     elif cmd == "stop":

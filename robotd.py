@@ -11,7 +11,7 @@ Design
   max_relative_target=2 (which clipped every goal to present+-2 deg and left loaded joints like the
   elbow without enough torque to lift the forearm), this gives the servo real effort but no wind-up.
 - Every target is clamped to the calibrated range of each joint.
-- A camera thread keeps the newest frame, so `snap` is instant.
+- One thread per wrist camera keeps the newest frame, so `snap` is instant.
 
 Commands (all joints: <side>_<joint>, side = left|right, joint = shoulder_pan, shoulder_lift,
 elbow_flex, wrist_flex, wrist_roll, gripper; degrees, gripper 0-100):
@@ -23,8 +23,8 @@ elbow_flex, wrist_flex, wrist_roll, gripper; degrees, gripper 0-100):
   goto <side> x y z             Cartesian straight line (m, arm base frame) via IK, pointing down
   stop                          freeze: target = measured, drop any plan
   save <name> / recall <name> [side] / poses     named poses in ./poses.json
-  snap [path]                   write the newest camera frame (default ./snap.jpg)
-  thumb <w> <h>                 newest frame resized to w x h, raw BGR bytes base64 (for terminal views)
+  snap [left|right] [path]      write newest wrist-camera frames (default both: ./snap_left.jpg, ./snap_right.jpg)
+  thumb <side> <w> <h>          newest frame of that camera resized to w x h, raw BGR bytes base64 (terminal views)
   speed <deg_per_s>             change VEL
   home                          go to the pose captured at start
   torque <left|right|all> on|off   off = arm goes limp for hand-guiding (support it!); on = hold where it is
@@ -41,7 +41,8 @@ os.chdir(HERE)
 SIM = os.environ.get("SO101_SIM") == "1"         # fake arms, no camera: test the stack without hardware
 SOCK = os.environ.get("SO101_SOCK", f"{HERE}/{'sim' if SIM else 'robot'}.sock")
 LOG, POSES = f"{HERE}/{'sim' if SIM else 'robotd'}.log", f"{HERE}/{'sim_' if SIM else ''}poses.json"
-CAM = "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0"
+CAMS = {"left": "/dev/v4l/by-id/usb-icSpring_icspring_camera_20240307110322-video-index0",        # left wrist
+        "right": "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0"}  # right wrist
 PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_{}-if00"
 SERIAL = {"left": "5B8E113306", "right": "5B61036524"}
 CALIB_DIR = f"{HERE}/calibration"                 # tools/calibrate.sh writes here; the only copy
@@ -235,33 +236,47 @@ def control_loop():
             next_t = time.perf_counter()
 
 
-# ---------- camera ----------
-frame = None
+# ---------- cameras (one on each wrist) ----------
+frames = {"left": None, "right": None}     # side -> (timestamp, BGR image), newest only
 
 
-def camera_loop():
-    global frame
+def open_cam(dev):
     import cv2
-    while SIM and running:   # synthetic moving test image
-        t = time.time(); yy, xx = np.mgrid[0:360, 0:640]
-        f = np.zeros((360, 640, 3), np.uint8); f[..., 0] = xx * 255 // 640; f[..., 1] = yy * 255 // 360
-        cv2.circle(f, (int(320 + 200 * np.sin(t)), 180), 50, (0, 0, 255), -1)
-        cv2.putText(f, "SIM " + time.strftime("%H:%M:%S"), (20, 340), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
-        frame = (t, f); time.sleep(0.1)
-    if SIM:
-        return
-    cam = cv2.VideoCapture(CAM, cv2.CAP_V4L2)
+    cam = cv2.VideoCapture(dev, cv2.CAP_V4L2)
     cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cam.set(cv2.CAP_PROP_FRAME_WIDTH, 1280); cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cam
+
+
+def camera_loop(side):
+    import cv2
+    while SIM and running:   # synthetic moving test image, labelled with the side
+        t = time.time(); yy, xx = np.mgrid[0:360, 0:640]
+        f = np.zeros((360, 640, 3), np.uint8); f[..., 0] = xx * 255 // 640; f[..., 1] = yy * 255 // 360
+        cv2.circle(f, (int(320 + 200 * np.sin(t)), 180), 50, (0, 0, 255) if side == "left" else (0, 200, 255), -1)
+        cv2.putText(f, f"SIM {side.upper()} " + time.strftime("%H:%M:%S"), (20, 340), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+        frames[side] = (t, f); time.sleep(0.1)
+    if SIM:
+        return
+    cam, warned = open_cam(CAMS[side]), False
     while running:
         ok, f = cam.read()
         if ok:
-            frame = (time.time(), f)
+            frames[side] = (time.time(), f); warned = False
         else:
-            time.sleep(0.5)
-            cam.release(); cam = cv2.VideoCapture(CAM, cv2.CAP_V4L2)
+            if not warned:
+                log(f"WARN {side} camera: no frame, reopening"); warned = True
+            time.sleep(0.5); cam.release(); cam = open_cam(CAMS[side])
     cam.release()
+
+
+def get_frame(side):
+    if side not in frames:
+        raise ValueError(f"unknown camera {side!r} (left|right)")
+    if frames[side] is None:
+        raise ValueError(f"no {side} camera frame yet")
+    return frames[side]
 
 
 # ---------- commands ----------
@@ -370,18 +385,19 @@ def handle(parts):
         return {"recall": parts[1]}
     if cmd == "snap":
         import cv2
-        if frame is None:
-            raise ValueError("no camera frame yet")
-        path = parts[1] if len(parts) > 1 else f"{HERE}/snap.jpg"
-        cv2.imwrite(path, frame[1])
-        return {"path": path, "age_s": round(time.time() - frame[0], 2)}
+        sides = [parts[1]] if len(parts) > 1 else ["left", "right"]
+        out, age = {}, {}
+        for side in sides:
+            t, img = get_frame(side)
+            out[side] = parts[2] if len(parts) > 2 else f"{HERE}/snap_{side}.jpg"
+            cv2.imwrite(out[side], img); age[side] = round(time.time() - t, 2)
+        return {"paths": out, "age_s": age}
     if cmd == "thumb":
         import base64, cv2
-        if frame is None:
-            raise ValueError("no camera frame yet")
-        w, h = max(1, min(400, int(parts[1]))), max(1, min(300, int(parts[2])))
-        small = cv2.resize(frame[1], (w, h), interpolation=cv2.INTER_AREA)
-        return {"w": w, "h": h, "age_s": round(time.time() - frame[0], 2), "bgr": base64.b64encode(small.tobytes()).decode()}
+        t, img = get_frame(parts[1])
+        w, h = max(1, min(400, int(parts[2]))), max(1, min(300, int(parts[3])))
+        small = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+        return {"w": w, "h": h, "age_s": round(time.time() - t, 2), "bgr": base64.b64encode(small.tobytes()).decode()}
     if cmd == "home":
         with lock:
             plan.clear(); target.update(home)
@@ -436,7 +452,8 @@ def client(conn):
 
 signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=shutdown, daemon=True).start())
 signal.signal(signal.SIGINT, lambda *_: threading.Thread(target=shutdown, daemon=True).start())
-threading.Thread(target=camera_loop, daemon=True).start()
+for _side in ("left", "right"):
+    threading.Thread(target=camera_loop, args=(_side,), daemon=True).start()
 threading.Thread(target=serve, daemon=True).start()
 log(f"robotd ready{' (SIM)' if SIM else ''}: {HZ} Hz, vel {VEL} deg/s, lead {LEAD} deg, P {P_GAIN}, KI {KI}; home=" +
     json.dumps({k: round(v, 1) for k, v in home.items()}))
