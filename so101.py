@@ -213,7 +213,7 @@ class Robot:
                 if c == "wait":     # a gripper closed on something never reaches its target: not news
                     r = {"off_target": {k: v for k, v in self.wait().items() if not (k.endswith("gripper") and v[0] <= 10)}}
                 elif c.split()[0] == "nudge":
-                    raise ValueError("nudge is disabled: plan the move and use goto <side> x y z (m)")
+                    _, sd, *d = c.split(); r = {"joints_moved": getattr(self, sd).nudge(*map(float, d))}
                 else:
                     r = self.call(c)
                     if c.split()[0] == "goto":   # runs in the background (the next command would cancel it): finish it

@@ -62,7 +62,7 @@ mv = R.nudge(0, 0, -1); check("nudge moves the tip ~1 cm down", abs(R.tip()[2] -
 try: R.nudge(20, 0, 0); check("nudge refuses big moves", False)
 except RobotError as e: check("nudge refuses big moves", "limited" in str(e))
 bot.step(); t = R.tip(); r = bot.step(f"goto right {t[0]} {t[1]} {t[2] + 0.02}"); check("step goto reports tip delta", abs(r["state"]["right"]["tip_delta"][2] - 0.02) < 0.004, r["ran"])
-r = bot.step("nudge right 0 0 1"); check("step refuses nudge", "disabled" in r["ran"][0][1], r["ran"])
+r = bot.step("nudge right 0 0 1"); check("step runs nudge", abs(r["state"]["right"]["tip_delta"][2] - 0.01) < 0.004, r["ran"])
 r = bot.step(f"goto right {t[0]} {t[1]} {t[2] - 0.02}"); import cv2; check("goto adds a wrist strip to the image", cv2.imread(r["image"]).shape[0] == 225 + 450 + 150)
 p = bot.locate(400, 225); check("locate: image centre lands on the table in front of the arms", 0.1 < p["left"][0] < 0.5 and abs(p["left"][1] - p["right"][1]) > 0.15, p)
 bot.home()

@@ -9,7 +9,8 @@ Never open serial ports or cameras yourself, never start a second robotd.
 (x 0.22, y 0), gripper pointing down. Then move with `goto <side> x y z` (m; x forward, y arm's left, z up; straight line,
 keeps the gripper orientation), e.g. `robot step "goto right 0.28 0.03 0.06"`. `robot ik <side> x y z` = dry run (moves nothing).
 Joint moves (`move right_wrist_flex 10`) for the rest. **No creeping:** gotos must move ≥ 2 cm and joint moves ≥ 5° (gripper
-and roll are free); smaller ones are refused, except ONE 1–2 cm goto fix after each bigger goto. Don't nudge toward the object.
+and roll are free); smaller ones are refused, except ONE 1–2 cm goto fix after each bigger goto. `nudge <side> dx dy dz` (cm, ≤ 3) exists but
+is discouraged: a chain of nudges toward the object is slow and means the estimate was poor; re-estimate and goto instead.
 **Estimate before you move** (thinking is cheap, wrong moves are not): find the object in the scene image and get its xyz with
 `robot locate u v z` (pixel in the 800x450 scene tile; z = a height you know: table -0.02, or the height of something it rests on /
 lines up with). The scene camera looks along x, so its x (forward) is the weak axis: cross-check x with the wrist view and with

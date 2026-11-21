@@ -7,6 +7,7 @@
   robot set right lift -40               absolute
   robot open left | close left | grip right 30
   robot goto left 0.2 0 0.08             straight line to that tip xyz (m, arm base frame), keeps the gripper orientation
+  robot nudge right 1 0 -0.5             tip dx dy dz cm, ≤ 3 cm (discouraged: estimate well and goto instead)
   robot tip left                         gripper tip position (m) from the measured pose
   robot ik right 0.30 0.05 0.06          dry run: joint targets for that tip xyz (pointing down), moves nothing
   robot save ready | recall ready [left|right] | poses
@@ -319,7 +320,7 @@ def main(argv):
     elif cmd == "ik":
         print(json.dumps(getattr(bot, side(a)).ik(*map(float, a[2:5])))); return
     elif cmd == "nudge":
-        sys.exit("nudge is disabled: plan the move and use goto <side> x y z (m), in one `robot plan`")
+        print(json.dumps(getattr(bot, side(a)).nudge(*map(float, a[2:5]), wait=wait))); return
     elif cmd == "locate":
         print(json.dumps(bot.locate(*map(float, a[1:4])))); return
     elif cmd == "tip":

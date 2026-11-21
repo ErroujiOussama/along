@@ -21,6 +21,7 @@ robot                            # state: target vs measured per joint, torque, 
 robot step "move right_elbow_flex -5; set right_gripper 20"   # run, wait until settled, snap_all.jpg + ~4 state lines
 robot step                       # just look: wrist cams on top (400x225), scene below (800x450) + joints, HOLDING, tip xyz + moved
 robot recall ready right         # from rest: gripper pointing down, tip 10 cm above the table (min 5.7 cm on the way)
+robot nudge right 2 0 -1         # tip dx dy dz cm, ≤ 3 cm; discouraged (re-estimate + goto instead)
 robot locate 400 300 0.05        # scene pixel (800x450) -> xyz where its ray meets z = 0.05 m, both arm frames
 robot ik right 0.3 0.05 0.06     # dry run: joint targets for a tip xyz, moves nothing
 robot move left elbow -5         # relative (deg; gripper %); `set` = absolute
