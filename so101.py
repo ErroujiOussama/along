@@ -210,6 +210,11 @@ class Robot:
                     _, sd, *d = c.split(); r = {"joints_moved": getattr(self, sd).nudge(*map(float, d))}
                 else:
                     r = self.call(c)
+                    if c.split()[0] == "goto":   # runs in the background (the next command would cancel it): finish it
+                        self.wait(); p = c.split()
+                        off = sum((a - float(b)) ** 2 for a, b in zip(getattr(self, p[1]).tip(), p[2:5])) ** 0.5
+                        if off > 0.01:
+                            raise ValueError(f"tip ended {off * 100:.1f} cm from the goal")
                 r.pop("ok", None)
             except (RobotError, ValueError, TypeError, AttributeError) as e:
                 r = f"ERROR: {e}"
@@ -250,7 +255,7 @@ class Robot:
                 raise RobotError("could not start the sim robotd")
         with sim:
             real = self.state()
-            sim.call("collide off"); sim.call("speed 120")
+            sim.call("collide off"); sim.call("speed 360")
             sim.call("pose " + json.dumps(real["target"])); sim.wait(timeout=30)
             sim.call(f"collide {'on' if real['collide']['on'] else 'off'}")
             sim.call(f"handover {'on' if real['collide']['handover'] else 'off'}")

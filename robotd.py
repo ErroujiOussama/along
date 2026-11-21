@@ -494,19 +494,23 @@ def handle(parts):
             m = dict(measured)
         return {**collide_cfg, "setup": collide.setup(), "near": collide_state(m)}
     if cmd == "speed":
-        VEL = max(1.0, min(120.0, float(parts[1])))
+        VEL = max(1.0, min(360.0 if SIM else 120.0, float(parts[1])))
         return {"vel": VEL}
     if cmd == "goto":
-        from kin import fk, ik, J
+        from kin import fk, J, K
         side = parts[1]; xyz = np.array([float(v) for v in parts[2:5]])
         if not (0.08 <= xyz[0] <= 0.38 and abs(xyz[1]) <= 0.2 and 0.0 <= xyz[2] <= 0.25):
             raise ValueError(f"target {xyz.tolist()} outside safe box")
         with lock:
             q = np.array([target[f"{side}_{j}"] for j in J])
-        start = fk(q); n = max(int(np.linalg.norm(xyz - start) / 0.005), 1)
+        T0 = K.forward_kinematics(q); start = T0[:3, 3].copy(); n = max(int(np.linalg.norm(xyz - start) / 0.005), 1)
         path = []
         for i in range(1, n + 1):
-            qn, err = ik(q, start + (xyz - start) * i / n)
+            T = T0.copy(); T[:3, 3] = start + (xyz - start) * i / n
+            a = np.arctan2(T[1, 3], T[0, 3]) - np.arctan2(start[1], start[0])   # keep the orientation (incl. roll), turned by the pan
+            T[:3, :3] = np.array([[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]]) @ T0[:3, :3]
+            qn = K.inverse_kinematics(q, T, 1.0, 0.1, 60)
+            err = float(np.linalg.norm(fk(qn) - T[:3, 3]))
             jump = float(np.abs(qn - q).max())
             if err > 0.015 or jump > 8:
                 raise ValueError(f"ik fails at waypoint {i}/{n}: err={err*1000:.0f}mm jump={jump:.0f}deg")
