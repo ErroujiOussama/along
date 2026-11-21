@@ -159,9 +159,11 @@ def along_api(h, u):
         seen = rd(".along_seen.json", {}) or {}
         for b in rd("along_idle.json", []):
             cv2.rectangle(img, tuple(b["box"][:2]), tuple(b["box"][2:]), (120, 120, 120), 1)
+        for u_, v_ in seen.get("arm_px", []):
+            cv2.circle(img, (int(u_), int(v_)), 3, (200, 60, 200), -1)     # arm links (FK): boxes there are ignored
         new = [d["box"] for d in seen.get("new", [])]
         for d in seen.get("all", []):
-            c = (60, 220, 60) if d["box"] in new else (60, 170, 230)   # BGR: green new, orange known
+            c = (60, 220, 60) if d["box"] in new else (200, 60, 200) if d.get("arm") else (60, 170, 230)   # BGR: green new, magenta on an arm, orange known
             cv2.rectangle(img, tuple(d["box"][:2]), tuple(d["box"][2:]), c, 2)
             txt = f"{d['label']} {d['conf']:.2f}"
             cv2.putText(img, txt, (d["box"][0], max(14, d["box"][1] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)

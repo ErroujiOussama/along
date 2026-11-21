@@ -214,15 +214,41 @@ class Eyes:
         from so101 import Robot
         self.m, self.bot, self.conf = YOLOWorld(f"{HERE}/along_world.pt"), Robot(), conf
 
+    def arm_px(self):
+        """The arms' links (FK at the measured pose) projected into the 800x450 scene image: the detector likes to call
+        a moved arm 'scissors' or 'knife', so boxes on an arm don't count as new objects."""
+        import numpy as np, collide
+        c = json.load(open(f"{HERE}/scene.json"))["scene_camera"]
+        f, up = np.array(c["forward"]), np.array(c["up"]); r = np.cross(f, up); fp = c["focal_px"]
+        m, su, pts = self.bot.state()["measured"], collide.setup(), []
+        for side in ("left", "right"):
+            F = collide.frames(np.array([m[f"{side}_{j}"] for j in collide.J]))[0]
+            o = [F[i, :3, 3] for i in range(1, F.shape[0])]
+            o = o + [(a + b) / 2 for a, b in zip(o, o[1:])] + [(F[-1] @ [0, 0, -0.1, 1])[:3]]   # + midpoints, jaw tips
+            B = collide.base_T(side, su)
+            for q in o:
+                d = (B @ np.r_[q, 1])[:3] - np.array(c["position"])
+                pts.append((W / 2 + fp * d @ r / (d @ f), H / 2 - fp * d @ up / (d @ f)))
+        return pts
+
     def detect(self):
         r = self.m.predict(self.bot.thumb("scene", W, H), verbose=False, conf=self.conf)[0]
-        return [{"label": r.names[int(c)], "conf": round(float(s), 2), "box": [int(v) for v in x],
-                 "px": [int((x[0] + x[2]) / 2), int((x[1] + x[3]) / 2)]}
-                for c, s, x in zip(r.boxes.cls, r.boxes.conf, r.boxes.xyxy)]
+        try:
+            arm = self.arm_px()
+        except Exception:
+            arm = []
+        out = []
+        for c, s, x in zip(r.boxes.cls, r.boxes.conf, r.boxes.xyxy):
+            x = [int(v) for v in x]
+            out.append({"label": r.names[int(c)], "conf": round(float(s), 2), "box": x,
+                        "px": [(x[0] + x[2]) // 2, (x[1] + x[3]) // 2],
+                        "arm": any(x[0] - 15 <= u <= x[2] + 15 and x[1] - 15 <= v <= x[3] + 15 for u, v in arm)})
+        self.arm = [[round(u), round(v)] for u, v in arm]
+        return out
 
 
 def novel(dets, base):
-    return [d for d in dets if d["conf"] >= 0.35 and not any(b["label"] == d["label"] and iou(b["box"], d["box"]) > 0.3 for b in base)]
+    return [d for d in dets if d["conf"] >= 0.35 and not d.get("arm") and not any(b["label"] == d["label"] and iou(b["box"], d["box"]) > 0.3 for b in base)]
 
 
 def rd_held():
@@ -295,7 +321,7 @@ def run():
             tell("[along] Back to idle: no new object in the scene and nothing in the jaws; the mic is off. "
                  "Park the arms (robot step \"recall rest\"), silently.")
         json.dump({"t": t, "active": active, "why": why, "listening": mic.on.is_set(), "speaking": muted(), "all": dets,
-                   "new": new, "held": rd_held(), "hits": hits, "last_new": last_new, "last_voice": last_voice}, open(SEEN, "w"))
+                   "new": new, "arm_px": getattr(eyes, "arm", []), "held": rd_held(), "hits": hits, "last_new": last_new, "last_voice": last_voice}, open(SEEN, "w"))
         time.sleep(max(0.0, 0.5 - (time.time() - t)))
 
 
