@@ -4,7 +4,8 @@ Active (mic on, Silero VAD -> ElevenLabs speech-to-text) only while an object of
 the idle baseline, 3 of 4 frames to start, kept 8 s after it was last seen) or an arm holding/offering. What you say goes to
 one long-running Codex session (tmux "along", persona prompts/along.md) which acts with `robot` and talks with `along say`.
 
-  along run              the daemon (vision + mic + Codex bridge)
+  along run              the daemon (mic + Codex bridge), switched by hand: along on / along off (or /along buttons)
+  along run --yolo       instead wake on the scene camera (new thing in the centre of the table)
   along idle             store what the scene shows now as the idle baseline (empty table + fixtures)
   along see              latest detections (label, conf, scene px in the 800x450 tile for `robot locate`)
   along look "question"  ask GPT 6.1 terra about the current scene + wrist frames (~5 s): what is where, orientation,
@@ -317,6 +318,36 @@ def engaged(bot):
         return [f"robot state unknown ({e})"]
 
 
+ON = f"{HERE}/.along_on"                                    # manual switch: exists = Along is on (mic open)
+
+
+def run_manual():
+    """Manual on/off (`along on` / `along off`, or the page buttons) instead of the scene detector."""
+    on, last_voice = False, 0.0
+
+    def heard(text):
+        nonlocal last_voice
+        last_voice = time.time(); tell(f"[voice] {text}")
+    mic = Mic(heard)
+    if not env("ALONG_DRY"):
+        codex_up()
+    log("off; waiting for `along on`")
+    while True:
+        t, want = time.time(), os.path.exists(ON)
+        if want and not on:
+            on = True; log("ON"); event("wake", "switched on")
+            say("Hi, I'm Along. Need a hand?")
+            chime(880); mic.on.set()
+            tell("[along] Switched on by hand; I already greeted them and the mic is on. Look at the scene and wait for their [voice] request.")
+        elif on and not want:
+            on = False; mic.on.clear(); log("OFF"); event("idle", "switched off")
+            tell("[along] Switched off; the mic is off. If nothing is held, park the arms (robot step \"recall rest\"), silently.")
+        json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
+                   "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
+                   "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice}, open(SEEN, "w"))
+        time.sleep(0.2)
+
+
 def run():
     eyes = Eyes()
     if not os.path.exists(IDLE):
@@ -413,7 +444,12 @@ def look(question, cams=("scene", "left", "right")):
 def main():
     a = sys.argv[1:] or ["help"]
     if a[0] == "run":
-        run()
+        run() if "--yolo" in a else run_manual()
+    elif a[0] == "on":
+        open(ON, "w").write("on")
+    elif a[0] == "off":
+        if os.path.exists(ON):
+            os.remove(ON)
     elif a[0] == "held":                                  # along held left toothbrush | along held left none
         h = rd_held(); side, what = a[1], " ".join(a[2:])
         if what in ("", "none", "nothing"):

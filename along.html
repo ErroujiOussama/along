@@ -35,6 +35,7 @@ label{font-size:12px;color:var(--dim)}
 #vad i{display:block;height:100%;background:#fff}
 </style></head><body>
 <header><b>along</b><span id="chips"></span><span style="flex:1"></span><a href="/">cameras</a><a href="/inspect">inspector</a></header>
+<div style="display:flex;background:#1a1a1a;gap:8px;padding:8px 10px"><button id="on" style="font-size:18px;padding:6px 22px;background:#1f6f34;color:#fff">Along ON</button><button id="off" style="font-size:18px;padding:6px 22px">Along OFF</button></div>
 <div id="banner" class="idle">…</div>
 <main>
  <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
@@ -74,6 +75,7 @@ async function poll() {
     const b = $('banner'), why = (s?.why || []).join(', ');
     let cls, big, small;
     if (!d.daemon || !s || age > 5) { cls = 'down'; big = 'NOT RUNNING'; small = d.daemon ? `daemon state ${age?.toFixed(0)} s old` : 'along run is not running: nothing is watched or heard'; }
+    else if (!s.active && s.manual) { cls = 'idle'; big = 'OFF · mic OFF'; small = 'not listening. Press "Along ON" to switch it on'; }
     else if (!s.active) { cls = 'idle'; big = 'IDLE · mic OFF'; small = `not listening. Wakes on something new in the wake zone (change ${((s.change||0)*100).toFixed(1)}%, needs >2% in 3 of 4 frames; hits ${(s.hits||[]).filter(Boolean).length}/4)`; }
     else if (s.mic === 'muted') { cls = 'muted'; big = 'ACTIVE · Along is talking (mic muted)'; small = 'because: ' + why; }
     else if (s.stt) { cls = 'stt'; big = 'ACTIVE · transcribing…'; small = 'because: ' + why; }
@@ -102,6 +104,7 @@ $('showtell').onchange = () => { lastEv = -1; };
 const doit = (cmd, text) => fetch('/along/do?' + new URLSearchParams({cmd, ...(text ? {text} : {})}));
 $('f').onsubmit = e => { e.preventDefault(); const t = $('txt').value.trim(), c = e.submitter?.dataset.cmd || 'voice';
   if (!t) return; doit(c === 'voice' ? 'tell' : 'say', c === 'voice' ? '[voice] ' + t : t); $('txt').value = ''; };
+$('on').onclick = () => doit('on'); $('off').onclick = () => doit('off');
 $('wake').onclick = () => doit('wake');
 $('idle').onclick = () => confirm('Store what the scene shows now as the idle baseline?') && doit('idle');
 </script></body></html>
