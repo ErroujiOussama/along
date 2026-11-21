@@ -1,0 +1,16 @@
+# systemd user service for robotd. Install: ln -sf $PWD/robotd.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+# Deliberately no [Install]: never autostarts; start it with the arms at rest.
+[Unit]
+Description=SO-101 robotd (sole owner of both arms + camera)
+StartLimitIntervalSec=60
+StartLimitBurst=4
+
+[Service]
+WorkingDirectory=%h/Projects/active/so101
+ExecStart=%h/Projects/active/so101/.venv/bin/python robotd.py
+Environment=PYTHONUNBUFFERED=1
+# crash -> restart (holds the pose it finds); `robot shutdown` exits 0 -> stays stopped
+Restart=on-failure
+RestartSec=3
+# stop = SIGTERM = go home (saved "rest"), release torque, exit
+TimeoutStopSec=25
