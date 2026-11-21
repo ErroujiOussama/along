@@ -4,6 +4,7 @@
   "brightness": 128
  },
  "right": {
-  "sharpness": 3
+  "sharpness": 3,
+  "power_line_frequency": 2
  }
 }

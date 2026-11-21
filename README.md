@@ -55,7 +55,7 @@ bot.step("move right_elbow_flex -5"); bot.snap_all(); bot.right.holding(); bot.c
 | `calibration/` | servo calibration, the only copy (`tools/calibrate.sh` rewrites it) |
 | `poses.json` · `cams.json` | saved poses (`rest`, …) · camera settings (scene: 50 Hz anti-flicker) |
 | `v4l.py` | V4L2 controls without v4l2-ctl |
-| `test_sim.py` | 24 end-to-end checks against the sim |
+| `test_sim.py` | end-to-end checks against the sim |
 | `tools/` | `scan.py` (which servo IDs answer), `calibrate.sh` — stop robotd first |
 | `AGENTS.md` · `prompts/` | rules for coding agents driving the arms · reusable task prompts (`pick.md`) |
 
@@ -83,7 +83,7 @@ bot.step("move right_elbow_flex -5"); bot.snap_all(); bot.right.holding(); bot.c
 ## Kinematics
 
 `fk(q5)` → tip xyz (m, arm base frame: x forward, y left, z up); `ik(q0, xyz)` gripper pointing down, ~3 mm accurate in x 0.18–0.32, |y| ≤ 0.08, z ≥ 0.02.
-Pan/wrist sign match to the hardware is still unverified.
+Signs: see the joint table in AGENTS.md (right-arm pan still unconfirmed).
 
 ## Lessons
 
