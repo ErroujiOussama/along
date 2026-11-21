@@ -11,7 +11,8 @@
     bot.left.tip()                    # forward kinematics of the measured pose (m)
     bot.snap()                        # all connected cameras -> {'left': 'snap_left.jpg', ..., 'scene': ...}
     bot.step("move right_elbow_flex -5")  # raw cmds, wait, one small mosaic -> {'ran', 'state', 'image', 'missing_cams'}
-    bot.snap_all()                    # all cameras side by side, 400x225 each -> snap_all.jpg; bot.mosaic() -> numpy BGR
+    bot.snap_all()                    # wrist cams 400x225 on top, scene 800x450 below -> snap_all.jpg; bot.mosaic() -> numpy BGR
+    bot.right.ik(0.3, 0.05, 0.06)     # dry run: joint targets for a tip xyz; bot.right.nudge(1, 0, -0.5) moves the tip (cm)
     bot.right.holding()               # gripper closed on something (stopped >= 5 short of a target <= 10)
     bot.left.frame()                  # newest left wrist-camera frame as numpy BGR; bot.left.snap() -> path
     bot.left.thumb(80, 45)            # small live frame (what the panel's camera view uses)
@@ -173,11 +174,12 @@ class Robot:
             tiles.append(t)
         return np.hstack(tiles)
 
-    def snap_all(self, path=None, names=None, missing=None):
-        """Write the camera mosaic (left | right | scene, 400x225 each) as one JPEG; returns its path."""
-        import cv2
+    def snap_all(self, path=None, missing=None):
+        """Write one JPEG: wrist cameras on top (left | right, 400x225 each), scene below at 800x450; returns its path."""
+        import cv2, numpy as np
         path = path or os.path.join(HERE, "snap_all.jpg")
-        cv2.imwrite(path, self.mosaic(names, missing=missing), [cv2.IMWRITE_JPEG_QUALITY, 80])
+        img = np.vstack([self.mosaic(["left", "right"], missing=missing), self.mosaic(["scene"], 800, 450, missing)])
+        cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return path
 
     def arms(self, st=None):
@@ -195,20 +197,33 @@ class Robot:
         return out
 
     def step(self, cmds=""):
-        """Run ';'-separated raw robotd commands (like `robot raw`), wait until settled, write snap_all.jpg.
-        Command errors are reported, not raised. -> {"ran": [[cmd, reply or "ERROR: ..."]], "state": arms(),
-        "image": path, "missing_cams": [...]}"""
+        """Run ';'-separated raw robotd commands (like `robot raw`, plus `nudge <side> dx dy dz` in cm),
+        wait until settled, write snap_all.jpg. Command errors are reported, not raised.
+        -> {"ran": [[cmd, reply or "ERROR: ..."]], "state": arms() (+ "tip_delta" since the last step), "image", "missing_cams"}"""
         ran, cmds = [], [c.strip() for c in cmds.split(";") if c.strip()]
         for i, c in enumerate(cmds + ([] if cmds[-1:] == ["wait"] else ["wait"])):
             try:
-                r = {"off_target": self.wait()} if c == "wait" else self.call(c)
+                if c == "wait":     # a gripper closed on something never reaches its target: not news
+                    r = {"off_target": {k: v for k, v in self.wait().items() if not (k.endswith("gripper") and v[0] <= 10)}}
+                elif c.split()[0] == "nudge":
+                    _, sd, *d = c.split(); r = {"joints_moved": getattr(self, sd).nudge(*map(float, d))}
+                else:
+                    r = self.call(c)
                 r.pop("ok", None)
-            except RobotError as e:
+            except (RobotError, ValueError, TypeError, AttributeError) as e:
                 r = f"ERROR: {e}"
             if i < len(cmds) or r != {"off_target": {}}:   # the final implicit wait only when it has news
                 ran.append([c, r])
-        missing = []
-        return {"ran": ran, "state": self.arms(), "image": self.snap_all(missing=missing), "missing_cams": missing}
+        missing, arms = [], self.arms()
+        last = os.path.join(HERE, ".last_tips_sim.json" if os.environ.get("SO101_SIM") == "1" else ".last_tips.json")
+        try:
+            prev = json.load(open(last))
+            for sd, a in arms.items():
+                a["tip_delta"] = [round(x - y, 3) for x, y in zip(a["tip"], prev[sd])]
+        except (OSError, ValueError, KeyError):
+            pass
+        json.dump({sd: a["tip"] for sd, a in arms.items()}, open(last, "w"))
+        return {"ran": ran, "state": arms, "image": self.snap_all(missing=missing), "missing_cams": missing}
 
     def save(self, name):
         self.call(f"save {name}")
@@ -260,6 +275,51 @@ class Arm:
 
     def close(self, wait=True):
         return self.grip(3, wait)
+
+    def ik(self, x, y, z):
+        """Dry run: joint targets (deg) that put the tip at (x, y, z) m pointing down, starting from the
+        measured pose, plus the residual error (m) and the largest joint change. Moves nothing."""
+        import sys, numpy as np
+        sys.path.insert(0, HERE)
+        from kin import ik, REST
+        p = self.pose(); q0 = np.array([p[j] for j in JOINTS[:5]])
+        best = []                                  # several seeds: the measured pose alone can diverge
+        for seed in (q0, REST, np.array([0, -40, 40, 70, 0.0]), np.array([0, -10, 0, 80, 0.0])):
+            q, err = ik(seed, [x, y, z])
+            best.append((round(float(err), 3), float(np.abs(q - q0).max()), q, err))
+        _, _, q, err = min(best, key=lambda t: t[:2])
+        return {"targets": {j: round(float(v), 1) for j, v in zip(JOINTS[:5], q)}, "error_m": round(float(err), 4),
+                "max_change_deg": round(float(max(abs(v - p[j]) for j, v in zip(JOINTS[:5], q))), 1)}
+
+    def nudge(self, dx=0.0, dy=0.0, dz=0.0, wait=True, max_deg=5.0, max_cm=3.0):
+        """Move the tip by (dx, dy, dz) cm in the arm base frame (x forward, y arm's left, z up), keeping the
+        gripper's current orientation, in straight-line sub-steps of <= max_deg per joint (at most max_cm total).
+        Returns the total joint change (deg)."""
+        import sys, numpy as np
+        sys.path.insert(0, HERE)
+        from kin import K, fk
+        d = np.array([dx, dy, dz], float) / 100
+        if np.linalg.norm(d) > max_cm / 100:
+            raise RobotError(f"nudge is limited to {max_cm} cm; split it")
+        p = self.robot.state()["target"]
+        q0 = q = np.array([p[self._key(j)] for j in JOINTS[:5]])
+        T0, qs = K.forward_kinematics(q0), []
+        for f in np.linspace(0, 1, 11)[1:]:      # 10 waypoints along the line, solved incrementally
+            T = T0.copy(); T[:3, 3] += f * d
+            a = np.arctan2(T[1, 3], T[0, 3]) - np.arctan2(T0[1, 3], T0[0, 3])   # sideways = pan: heading turns along
+            T[:3, :3] = np.array([[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]]) @ T0[:3, :3]
+            q = K.inverse_kinematics(q, T, 1.0, 0.1, 60); q[4] = q0[4]   # never roll
+            if np.linalg.norm(fk(q) - T[:3, 3]) > 0.005:
+                raise RobotError(f"nudge unreachable from here (off by {np.linalg.norm(fk(q) - T[:3, 3]) * 100:.1f} cm)")
+            qs.append(q.copy())
+        if np.abs(qs[-1] - q0).max() > 6 * max_deg:
+            raise RobotError("nudge needs a big joint swing here (near a singularity?): use joint moves")
+        last = q0                                 # send only waypoints that are max_deg apart, plus the end
+        for i, q in enumerate(qs):
+            if np.abs(q - last).max() >= max_deg or i == len(qs) - 1:
+                self.robot.set({self._key(j): round(float(v), 2) for j, v in zip(JOINTS[:5], q)}, wait or i < len(qs) - 1)
+                last = q
+        return {j: round(float(v - w), 1) for j, v, w in zip(JOINTS[:5], qs[-1], q0) if abs(v - w) >= 0.1}
 
     def goto(self, x, y, z, wait=True):
         """Straight Cartesian line to (x, y, z) m in this arm's base frame, gripper pointing down."""

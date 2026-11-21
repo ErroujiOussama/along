@@ -8,6 +8,9 @@
   robot open left | close left | grip right 30
   robot goto left 0.2 0 0.08             Cartesian (m, arm base frame), gripper down
   robot tip left                         gripper tip position (m) from the measured pose
+  robot ik right 0.30 0.05 0.06          dry run: joint targets for that tip xyz (pointing down), moves nothing
+  robot nudge right 1 0 -0.5             move the tip dx dy dz cm (x forward, y arm's left, z up), keeps the
+                                         gripper orientation; refused if a joint would move > 5 deg
   robot save ready | recall ready [left|right] | poses
   robot torque off left | torque on [all]   limp for hand-guiding (HOLD THE ARM) / hold the new pose
   robot snap [left|right|scene] [path]   camera frames (default all connected: snap_<cam>.jpg)
@@ -17,9 +20,10 @@
   robot view [cam ...]                   live video window, cameras side by side (default all)
   robot stream [port [cam ...]]          the same as a web page (MJPEG, default port 8101; share with tailcat)
   robot stop | home | limits | speed 30
-  robot step ["move right_elbow_flex -5; grip right 3"]   agent loop: raw cmds, wait until settled, then
-                                         4-line summary (joints, HOLDING = gripper closed on something, tip xyz m)
-                                         + ONE small image snap_all.jpg (left | right | scene, 400x225 each)
+  robot step ["move right_elbow_flex -5; nudge right 0 0 -1"]   agent loop: raw cmds (+ nudge), wait until settled,
+                                         then a few lines (joints, HOLDING = gripper closed on something,
+                                         tip xyz m + how far it moved since the last step)
+                                         + ONE image snap_all.jpg (left | right wrist 400x225 on top, scene 800x450 below)
   robot raw "move left_elbow_flex -5; wait; snap"   raw robotd protocol, ';' chains, wait = until settled
   robot shutdown [here]                  release torque after going home (or right here)
 
@@ -79,10 +83,12 @@ def step_text(r):
     for s, a in r["state"].items():
         js = " ".join(f"{n} {a['measured'][j] + 0:.1f}{'!' if j in a['off'] else ''}" for n, j in zip(SHORT, JOINTS[:5]))
         g = f"grip {a['measured']['gripper'] + 0:.1f}{'!' if 'gripper' in a['off'] else ''} (target {a['target']['gripper']:.1f})"
+        d = a.get("tip_delta")
+        d = f" (moved {' '.join(f'{v * 100:+.1f}' for v in d)} cm)" if d and any(abs(v) >= 0.002 for v in d) else ""
         out.append(f"{s:6s} {js} {g}{' HOLDING' if a['holding'] else ''}   torque {'on' if a['torque'] else 'OFF'}"
-                   f"   tip {' '.join(f'{v:.2f}' for v in a['tip'])}")
+                   f"   tip x{a['tip'][0]:.2f} y{a['tip'][1]:+.2f} z{a['tip'][2]:.2f} m{d}")
     cams = " | ".join(n + (" MISSING" if n in r["missing_cams"] else "") for n in ("left", "right", "scene"))
-    return "\n".join(out + [f"image  {r['image']}  ({cams})"])
+    return "\n".join(out + [f"image  {r['image']}  (top: {' | '.join(cams.split(' | ')[:2])}; below, large: {cams.split(' | ')[2]})"])
 
 
 def stream(names, port):
@@ -228,6 +234,10 @@ def main(argv):
         off = getattr(bot, side(a)).grip(float(a[2]), wait=wait)
     elif cmd == "goto":
         off = getattr(bot, side(a)).goto(*map(float, a[2:5]), wait=wait)
+    elif cmd == "ik":
+        print(json.dumps(getattr(bot, side(a)).ik(*map(float, a[2:5])))); return
+    elif cmd == "nudge":
+        print(json.dumps(getattr(bot, side(a)).nudge(*map(float, a[2:5]), wait=wait))); return
     elif cmd == "tip":
         print([round(v, 3) for v in getattr(bot, side(a)).tip()]); return
     elif cmd == "recall":

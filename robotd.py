@@ -27,7 +27,7 @@ elbow_flex, wrist_flex, wrist_roll, gripper; degrees, gripper 0-100):
   cams                          per camera: ok (fresh frame), age_s, device
   camctl <cam> [k=v ...] [reset]   list / set+save V4L2 controls (auto_exposure 1=manual 3=auto,
                                 exposure_time_absolute, gain, brightness, power_line_frequency 1=50 Hz, focus...)
-  thumb <side> <w> <h>          newest frame of that camera resized to w x h, raw BGR bytes base64 (terminal views)
+  thumb <side> <w> <h>          (max 960x540) newest frame of that camera resized to w x h, raw BGR bytes base64 (terminal views)
   speed <deg_per_s>             change VEL
   home                          go to the pose captured at start
   torque <left|right|all> on|off   off = arm goes limp for hand-guiding (support it!); on = hold where it is
@@ -266,11 +266,15 @@ def control_loop():
 frames = {name: None for name in CAMS}     # name -> (timestamp, BGR image), newest only
 
 
-def open_cam(dev):
+RES = {"scene": (1920, 1080)}    # others 1280x720
+
+
+def open_cam(dev, side=None):
     import cv2
     cam = cv2.VideoCapture(dev, cv2.CAP_V4L2)
     cam.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-    cam.set(cv2.CAP_PROP_FRAME_WIDTH, 1280); cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    w, h = RES.get(side, (1280, 720))
+    cam.set(cv2.CAP_PROP_FRAME_WIDTH, w); cam.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
     cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cam
 
@@ -292,7 +296,7 @@ def camera_loop(side):
                 if up is not False:
                     log(f"WARN {side} camera: not connected ({dev})"); up = False
                 time.sleep(1); continue
-            cam = open_cam(dev)
+            cam = open_cam(dev, side)
             apply_camcfg(side)
         ok, f = cam.read()
         if ok:
@@ -484,7 +488,7 @@ def handle(parts):
     if cmd == "thumb":
         import base64, cv2
         t, img = get_frame(parts[1])
-        w, h = max(1, min(400, int(parts[2]))), max(1, min(300, int(parts[3])))
+        w, h = max(1, min(960, int(parts[2]))), max(1, min(540, int(parts[3])))
         small = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
         return {"w": w, "h": h, "age_s": round(time.time() - t, 2), "bgr": base64.b64encode(small.tobytes()).decode()}
     if cmd == "home":

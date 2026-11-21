@@ -4,9 +4,11 @@ You drive two real SO-101 arms (left = white, right = orange). The task comes in
 robotd (systemd user service) owns the arms, the cameras and the one shared state: use ONLY the `robot` CLI or `from so101 import Robot`.
 Never open serial ports or cameras yourself, never start a second robotd.
 
-**Loop:** `robot step "<one small action>"`, then open snap_all.jpg (left wrist | right wrist | scene, labelled). Decide, repeat.
-`robot step` alone = just look. Its ~4 lines give per arm the joints, gripper measured vs target + HOLDING, torque and tip xyz (m; arm base frame: x forward, y arm's left, z up).
-`off target: right_gripper` after a close is normal while it squeezes something.
+**Loop:** `robot step "<one small action>"`, then open snap_all.jpg (left | right wrist on top, scene camera large below). Decide, repeat.
+`robot step` alone = just look. **Start** with `robot step "recall ready <side>"`: from rest in one call to tip 10 cm above the table
+(x 0.22, y 0), gripper pointing down. Then move with `nudge <side> dx dy dz` (cm; x forward, y arm's left, z up; ≤ 3 cm, keeps
+the gripper orientation, auto-splits into ≤ 5° joint steps), e.g. `robot step "nudge right 2 0 0"` or `"nudge right 0 0 -1"`.
+`robot ik <side> x y z` = dry run (joint targets for a tip position, moves nothing). Joint moves (`move right_wrist_flex 3`) for the rest. Its ~4 lines give per arm the joints, gripper measured vs target + HOLDING, torque, tip xyz (m) and how far the tip moved since the last step (cm).
 Do not write your own step helper and do not open full-res images by default: `robot snap <cam>` only when you need detail.
 
 | joint (deg) | + means | notes (observed on hardware 2026-11-21) |
@@ -23,10 +25,10 @@ right-arm pan − moves its gripper image-right. A wrist camera cannot see under
 Camera exposure is on auto; change it (`robot cam <cam> ...`) only if an image is unusable, and say so.
 **Grasp:** jaws ~20 open, straddle the object's body (one jaw each side; thin straps/edges slip), lower until the tips are beside it,
 `set <side>_gripper 0`. If the measured gripper stays well above its target (e.g. ~18), the step prints HOLDING: you have it.
-Thin/soft things (fabric) can close fully without HOLDING: lift a few degrees and check the scene camera before calling it a miss.
+Thin/soft things (fabric) close almost fully without HOLDING (servo load does not tell either): nudge up 1–2 cm and check that the object follows in the scene camera.
 Lift slowly, then confirm in snap_all.jpg that it is clear of the table.
 
-**Safety:** steps ≤ 5°; lift before any sideways move; first `goto` slow and small to confirm signs; never release torque while raised.
+**Safety:** steps ≤ 5° (nudge does this itself); lift before any sideways move; first `goto` slow and small to confirm signs; never release torque while raised.
 Humans may hand-guide (torque off) or use the panel at the same time: read the state before each move. If hands are in view, stop and wait.
 
 **Sandbox:** robot commands use a Unix socket. If the first call says "robotd is not running" inside a sandbox, it is the sandbox:

@@ -19,7 +19,10 @@ robot save rest                  # once, with the arms folded at rest: home/stop
 ```bash
 robot                            # state: target vs measured per joint, torque, loop Hz
 robot step "move right_elbow_flex -5; set right_gripper 20"   # run, wait until settled, snap_all.jpg + ~4 state lines
-robot step                       # just look: all cameras side by side (left | right | scene, 400x225) + joints, HOLDING, tip xyz
+robot step                       # just look: wrist cams on top (400x225), scene below (800x450) + joints, HOLDING, tip xyz + moved
+robot recall ready right         # from rest: gripper pointing down, tip 10 cm above the table (min 5.7 cm on the way)
+robot nudge right 2 0 -1         # tip dx dy dz cm (x fwd, y left, z up), ≤ 3 cm, ≤ 5°/joint sub-steps; also inside step "..."
+robot ik right 0.3 0.05 0.06     # dry run: joint targets for a tip xyz, moves nothing
 robot move left elbow -5         # relative (deg; gripper %); `set` = absolute
 robot open right · robot close right · robot goto left 0.2 0 0.08 · robot tip left
 robot torque off left            # limp for hand-guiding — HOLD THE ARM; `torque on left` holds the new pose
@@ -41,6 +44,7 @@ from so101 import Robot
 bot = Robot()
 bot.left.move(elbow=-5); bot.right.goto(0.2, 0, 0.08); bot.left.torque(False); img = bot.frame()
 bot.step("move right_elbow_flex -5"); bot.snap_all(); bot.right.holding(); bot.cams()
+bot.right.nudge(1, 0, -0.5); bot.right.ik(0.3, 0.05, 0.06)
 ```
 
 `robot help` lists everything. Joints: pan lift elbow wrist roll gripper. Sides: left (white), right (orange).
@@ -53,7 +57,7 @@ bot.step("move right_elbow_flex -5"); bot.snap_all(); bot.right.holding(); bot.c
 | `so101.py` · `robot.py` · `tui.py` | Python API · CLI · panel |
 | `kin.py`, `so101.urdf` | FK/IK (URDF from TheRobotStudio/SO-ARM100, meshes stripped) |
 | `calibration/` | servo calibration, the only copy (`tools/calibrate.sh` rewrites it) |
-| `poses.json` · `cams.json` | saved poses (`rest`, …) · camera settings (scene: 50 Hz anti-flicker) |
+| `poses.json` · `cams.json` | saved poses (`rest`, `ready`) · camera settings (scene: 50 Hz anti-flicker) |
 | `v4l.py` | V4L2 controls without v4l2-ctl |
 | `test_sim.py` | end-to-end checks against the sim |
 | `tools/` | `scan.py` (which servo IDs answer), `calibrate.sh` — stop robotd first |
@@ -75,7 +79,7 @@ bot.step("move right_elbow_flex -5"); bot.snap_all(); bot.right.holding(); bot.c
 ## Hardware
 
 - LEFT = white `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B8E113306-if00`; RIGHT = orange `…5B61036524-if00`. STS3215 ×6 each, 1 Mbaud.
-- Cameras (`/dev/v4l/by-id/…`): left wrist icSpring, right wrist Sonix USB2.0_CAM1, scene Logitech C920.
+- Cameras (`/dev/v4l/by-id/…`): left wrist icSpring, right wrist Sonix USB2.0_CAM1 (1280x720), scene Logitech C920 (1920x1080).
   Plug the cameras into the laptop, not the hub (hub → USB 1.1, 160x120 purple frames).
 - Units: degrees, 0 = mid-range; gripper 0–100, 0 = closed.
 - Rest ≈ pan 0, lift -102, elbow 96, wrist_flex 60–67, gripper 3–5 (lift and elbow on their hard stops).
