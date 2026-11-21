@@ -69,6 +69,8 @@ def say(text):
         with open(f"{HERE}/.along_live_out.jsonl", "a") as f:
             f.write(json.dumps({"text": text}) + "\n")
         return
+    if env("ALONG_VOICE_BACKEND", "live") == "live":         # GPT-Live is the only voice: off = silent, logged only
+        return
     key = env("ELEVENLABS_API_KEY")
     open(MUTE, "w").write(str(time.time() + 30))
     try:
@@ -460,6 +462,31 @@ def engaged(bot):
 ON = f"{HERE}/.along_on"                                    # manual switch: exists = Along is on (mic open)
 
 
+def relay_replies():
+    """Codex's final message of each turn is what Along says (GPT-Live voices it): no `along say` tool call needed."""
+    import glob
+    done, first, mt = set(), True, {}
+    while True:
+        fs = sorted(glob.glob(os.path.expanduser("~/.codex/sessions/*/*/*/rollout-*.jsonl")), key=os.path.getmtime)[-6:]
+        for f in fs:
+            if mt.get(f) == os.path.getmtime(f):
+                continue
+            mt[f] = os.path.getmtime(f)
+            with open(f) as fh:
+                if f'"cwd":"{HERE}"' not in fh.readline():
+                    continue
+                for ln in fh:
+                    if '"task_complete"' not in ln:
+                        continue
+                    p = json.loads(ln).get("payload", {}); tid = p.get("turn_id")
+                    if tid in done:
+                        continue
+                    done.add(tid); msg = (p.get("last_agent_message") or "").strip()
+                    if not first and msg and msg.lower().strip(".") != "ready":
+                        say(msg[:400])
+        first = False; time.sleep(0.3)
+
+
 def run_manual():
     """Manual on/off (`along on` / `along off`, or the page buttons) instead of the scene detector."""
     on, last_voice = False, 0.0
@@ -472,6 +499,7 @@ def run_manual():
         tell(f"[voice] {text}")
     live = bool(env("OPENAI_API_KEY")) and env("ALONG_VOICE_BACKEND", "live") == "live"
     mic = LiveVoice(heard) if live else Mic(heard)
+    threading.Thread(target=relay_replies, daemon=True).start()
     if not env("ALONG_DRY"):
         codex_up()
     log(f"off ({'GPT-Live' if live else 'ElevenLabs'} voice); waiting for `along on`")
@@ -619,12 +647,11 @@ def skill(a):
             r = json.loads(subprocess.run(["robot", "offer", side, str(x), str(y), str(z), "90" if flat else "0"],
                                           capture_output=True, text=True).stdout or '{"holding": false}')
             if r.get("holding"):
-                set_held(side, what); say_bg("Got it."); break
+                set_held(side, what); break
             if attempt == 1:
                 say_bg("Missed it, once more.")
         print(f"hold {side}: {r}"); print(rstep())
     elif cmd == "release":                          # along release <side>
-        say_bg("Releasing.")
         print(rstep(f"set {side}_gripper 45")); time.sleep(1.0); set_held(side, "none")
         print(rstep(f"recall ready {side}"))
     elif cmd == "turn":                             # along turn <side> <deg>   (wrist roll, + / -)
