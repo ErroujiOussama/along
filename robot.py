@@ -11,6 +11,7 @@
   robot save ready | recall ready [left|right] | poses
   robot torque off left | torque on [all]   limp for hand-guiding (HOLD THE ARM) / hold the new pose
   robot snap [left|right] [path]         wrist-camera frames (default both: snap_left.jpg, snap_right.jpg)
+  robot view [left|right]                live video window of the wrist cameras (default both side by side)
   robot stop | home | limits | speed 30
   robot raw "move left_elbow_flex -5; wait; snap"   raw robotd protocol, ';' chains, wait = until settled
   robot shutdown [here]                  release torque after going home (or right here)
@@ -65,6 +66,20 @@ def main(argv):
                 print("\033[H\033[J" + table(bot.state()), flush=True); time.sleep(0.2)
         except KeyboardInterrupt:
             return
+    if cmd == "view":
+        import subprocess, numpy as np
+        sides = [side(a)] if len(a) > 1 else ["left", "right"]
+        w, h = 400, 225                     # robotd's thumb limit; ~12 fps
+        p = subprocess.Popen(["ffplay", "-loglevel", "error", "-window_title", "so101 " + " | ".join(sides),
+                              "-f", "rawvideo", "-pixel_format", "bgr24", "-video_size", f"{w * len(sides)}x{h}",
+                              "-framerate", "12", "-fflags", "nobuffer", "-i", "-"], stdin=subprocess.PIPE)
+        try:
+            while p.poll() is None:
+                p.stdin.write(np.hstack([bot.thumb(s, w, h) for s in sides]).tobytes()); p.stdin.flush()
+                time.sleep(1 / 12)
+        except (BrokenPipeError, KeyboardInterrupt):
+            pass
+        return
     if cmd == "raw":
         for c in " ".join(a[1:]).split(";"):
             c = c.strip()
