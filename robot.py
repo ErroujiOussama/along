@@ -12,6 +12,7 @@
   robot torque off left | torque on [all]   limp for hand-guiding (HOLD THE ARM) / hold the new pose
   robot snap [left|right] [path]         wrist-camera frames (default both: snap_left.jpg, snap_right.jpg)
   robot view [left|right]                live video window of the wrist cameras (default both side by side)
+  robot stream [port]                    the same video as a web page (MJPEG, default port 8101; share with tailcat)
   robot stop | home | limits | speed 30
   robot raw "move left_elbow_flex -5; wait; snap"   raw robotd protocol, ';' chains, wait = until settled
   robot shutdown [here]                  release torque after going home (or right here)
@@ -50,6 +51,53 @@ def side(a, i=1):
         sys.exit("say which arm: left or right")
 
 
+def stream(bot, port):
+    """Serve both wrist cameras (through robotd) as MJPEG at http://0.0.0.0:port/."""
+    import cv2, numpy as np, threading
+    from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+    latest, lock = [b""], threading.Lock()
+
+    def grab():                             # one robotd reader, shared by all viewers
+        while True:
+            try:
+                img = np.hstack([bot.thumb(s, 400, 225) for s in ("left", "right")])
+                with lock:
+                    latest[0] = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])[1].tobytes()
+            except Exception:
+                pass
+            time.sleep(1 / 12)
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            if self.path != "/stream":
+                body = (b"<html><title>so101</title><body style='margin:0;background:#111;color:#ccc;font:14px sans-serif'>"
+                        b"<p style='margin:6px'>so101 wrist cameras: left (icSpring) | right (Sonix)</p>"
+                        b"<img src='/stream' style='width:100%'></body></html>")
+                self.send_response(200); self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=f"); self.end_headers()
+            try:
+                while True:
+                    with lock:
+                        jpg = latest[0]
+                    if jpg:
+                        self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(jpg) + jpg + b"\r\n")
+                    time.sleep(1 / 12)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    threading.Thread(target=grab, daemon=True).start()
+    print(f"streaming on http://127.0.0.1:{port}/  (share: tailcat serve {port})", flush=True)
+    try:
+        ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
 def main(argv):
     as_json, wait = "--json" in argv, "--no-wait" not in argv
     a = [x for x in argv if x not in ("--json", "--no-wait")]
@@ -80,6 +128,8 @@ def main(argv):
         except (BrokenPipeError, KeyboardInterrupt):
             pass
         return
+    if cmd == "stream":
+        stream(bot, int(a[1]) if len(a) > 1 else 8101); return
     if cmd == "raw":
         for c in " ".join(a[1:]).split(";"):
             c = c.strip()

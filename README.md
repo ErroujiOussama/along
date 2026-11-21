@@ -23,6 +23,7 @@ robot open right · robot close right · robot goto left 0.2 0 0.08 · robot tip
 robot torque off left            # limp for hand-guiding — HOLD THE ARM; `torque on left` holds the new pose
 robot save NAME · robot recall NAME [side] · robot stop · robot home · robot snap
 robot view [left|right]         # live video window of the wrist cameras (through robotd)
+robot stream [port]              # same as a web page (MJPEG, :8101); share: `tailcat serve 8101`, viewers `tailcat browse <addr>`
 robot raw "move right_elbow_flex -5; wait; snap"   # raw protocol; ';' chains, wait = until settled
 .venv/bin/python tui.py          # keyboard panel + live camera (v); shared as quack session so101-tui
 systemctl --user stop robotd     # park at rest, release torque
