@@ -318,7 +318,7 @@ class Robot:
         st = collide.setup(); ready = json.load(open(os.path.join(HERE, "poses.json")))["ready"]
         q0 = np.array([ready[f"{side}_{j}"] for j in collide.J])
         cam = st["mounted"].get(side, collide.CAPS["wrist_cam"]); cc = (np.array(cam[1]) + np.array(cam[2])) / 2
-        views, tiles = [], []
+        views, tiles, t0 = [], [], time.time()
         self.recall("ready", side)
         for pan, lift, wrist in ((0, 0, 0), (-30, 0, 0), (30, 0, 0), (0, -15, -30)):
             q = q0 + [pan, lift, 0, wrist, 0]
@@ -346,6 +346,12 @@ class Robot:
         tiles += [tile("view skipped (collision)", 400, 225)] * (4 - len(tiles))
         img = np.vstack([np.hstack(tiles[:2]), np.hstack(tiles[2:]), self.mosaic(["scene"], 800, 450)])
         cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        st2 = self.state()
+        try:
+            self._record([f"scan {side}"], {"ran": [[f"scan {side}", {"views": views}]], "blocked": [], "near": [],
+                                            "state": self.arms(st2), "image": path}, t0, st2)
+        except Exception:
+            pass
         return {"image": path, "views": views}
 
     def save(self, name):
