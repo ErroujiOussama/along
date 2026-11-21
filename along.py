@@ -292,8 +292,9 @@ class LiveVoice:
                     if self.heard.strip() and self.phase == "speech":     # a turn without a delegation (chat)
                         event("heard", self.heard.strip() + "  (chat)"); self.heard = ""
                     b = base64.b64decode(e["delta"]); spk.stdin.write(b); spk.stdin.flush()
-                    self.speak_until = max(self.speak_until, time.time()) + len(b) / (2 * self.RATE)
-                    self.phase = "muted"
+                    import numpy as np                    # the stream never stops (silence too): mute only on real speech
+                    if len(b) >= 2 and float(np.sqrt(np.mean(np.frombuffer(b, np.int16).astype(np.float32) ** 2))) > 300:
+                        self.speak_until = max(self.speak_until, time.time() + 0.6); self.phase = "muted"
                 elif k == "session.output_transcript.delta":
                     said += e["delta"]
                 elif k == "session.input_transcript.delta":
@@ -478,10 +479,9 @@ def run_manual():
             if not live:
                 say("Hi, I'm Along. Need a hand?")
             chime(880); mic.on.set()
-            tell("[along] Switched on; the mic is on and they were greeted. Wait for [voice] requests.")
         elif on and not want:
             on = False; mic.on.clear(); log("OFF"); event("idle", "switched off")
-            tell("[along] Switched off; the mic is off. If nothing is held, park the arms (robot step \"recall rest\"), silently.")
+            threading.Thread(target=skill, args=(["park"],), daemon=True).start()   # no Codex turn needed
         json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
                    "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
                    "voice": "GPT-Live" if live else "ElevenLabs", "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice}, open(SEEN, "w"))
