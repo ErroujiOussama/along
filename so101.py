@@ -381,10 +381,15 @@ class Robot:
             else:
                 break
             tries += 1
-            self.set({f"{side}_gripper": 0})
-            time.sleep(0.4)
-            if self.arms()[side]["holding"]:
-                return {"holding": True, "tries": tries, "waited_s": round(time.time() - t0, 1)}
+            self.set({f"{side}_gripper": 0}, wait=False)
+            g = [self.state()["measured"][f"{side}_gripper"]]
+            for _ in range(25):                   # until the jaws stop
+                time.sleep(0.1); g.append(self.state()["measured"][f"{side}_gripper"])
+                if len(g) > 4 and max(g[-4:]) - min(g[-4:]) < 0.5:
+                    break
+            seen = float(np.abs(roi() - base).mean())
+            if g[-1] >= 3.5 or seen > 18:          # thin things stop low: the object still in view counts too
+                return {"holding": True, "tries": tries, "gripper": round(g[-1], 1), "waited_s": round(time.time() - t0, 1)}
             self.set({f"{side}_gripper": open_pct})   # closed on nothing: reopen, wait again
         return {"holding": False, "tries": tries, "waited_s": round(time.time() - t0, 1)}
 
