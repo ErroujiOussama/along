@@ -161,7 +161,7 @@ def along_api(h, u):
             x0, y0, x1, y1 = seen["roi"]; ch = seen.get("change", 0)
             cv2.rectangle(img, (x0, y0), (x1, y1), (60, 220, 60) if ch > 0.02 else (230, 200, 60), 1)
             cv2.putText(img, f"wake zone  change {ch * 100:.1f}% (>2% wakes)", (x0 + 4, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (230, 200, 60), 1)
-        for b in rd("along_idle.json", []):
+        for b in ([] if seen.get("manual") else rd("along_idle.json", [])):
             cv2.rectangle(img, tuple(b["box"][:2]), tuple(b["box"][2:]), (120, 120, 120), 1)
         for u_, v_ in seen.get("arm_px", []):
             cv2.circle(img, (int(u_), int(v_)), 3, (200, 60, 200), -1)     # arm links (FK): boxes there are ignored
