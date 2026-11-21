@@ -61,7 +61,7 @@ bot.right.nudge(1, 0, -0.5); bot.right.ik(0.3, 0.05, 0.06)
 | `v4l.py` | V4L2 controls without v4l2-ctl |
 | `test_sim.py` | end-to-end checks against the sim |
 | `tools/` | `scan.py` (which servo IDs answer), `calibrate.sh` — stop robotd first |
-| `AGENTS.md` · `prompts/` | rules for coding agents driving the arms · reusable task prompts (`pick.md`) |
+| `AGENTS.md` · `prompts/` · `notes/` | rules for coding agents driving the arms · reusable task prompts (`pick.md`) · parked ideas (`premotor.md`) |
 
 ## How robotd works
 
