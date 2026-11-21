@@ -69,12 +69,12 @@ async function poll() {
     const nb = new Set((s?.new || []).map(x => x.box.join()));
     $('dets').innerHTML = (s?.all || []).map(x => `<tr class="${nb.has(x.box.join()) ? 'new' : ''}"><td>${esc(x.label)}</td><td>${x.conf.toFixed(2)}</td><td>${x.px.join(', ')}</td><td>${x.box.join(' ')}</td></tr>`).join('');
     $('arms').innerHTML = d.arms.error ? esc(d.arms.error) : Object.entries(d.arms).map(([k, a]) =>
-      `<span><b>${k}</b> gripper ${a.gripper_target} ${a.holding ? '<span class="chip on">HOLDING</span>' : ''} tip ${a.tip.map(v => v.toFixed(3)).join(' ')}</span>`).join('');
+      `<span><b>${k}</b> ${s?.held?.[k] ? `<span class="chip on">holds ${esc(s.held[k])}</span>` : ''} gripper ${a.gripper_target} ${a.holding ? '<span class="chip on">HOLDING</span>' : ''} tip ${a.tip.map(v => v.toFixed(3)).join(' ')}</span>`).join('');
     if (d.events.length && d.events[d.events.length - 1].t !== lastEv) {
       lastEv = d.events[d.events.length - 1].t;
       const show = $('showtell').checked;
       $('conv').innerHTML = d.events.filter(e => show || e.kind !== 'tell').map(e =>
-        `<div class="ev ${e.kind}"><span class="t">${hm(e.t)}</span><span class="k">${{heard: 'you', say: 'along', tell: '→codex', look: 'look?', seen: 'terra'}[e.kind] || e.kind}</span><span class="x">${esc(e.text)}</span></div>`).join('');
+        `<div class="ev ${e.kind}"><span class="t">${hm(e.t)}</span><span class="k">${{heard: 'you', say: 'along', tell: '→codex', held: 'state', look: 'look?', seen: 'terra'}[e.kind] || e.kind}</span><span class="x">${esc(e.text)}</span></div>`).join('');
       if (stick) $('conv').scrollTop = 1e9;
     }
     const p = $('codex'), atEnd = p.scrollTop + p.clientHeight > p.scrollHeight - 30;

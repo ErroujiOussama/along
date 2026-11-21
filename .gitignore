@@ -14,3 +14,4 @@ scan.jpg
 *.pt
 !along_world.pt
 along_idle.json
+.along_held.json

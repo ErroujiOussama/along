@@ -26,7 +26,8 @@ pick the arm on their side (person on image-left of the scene camera = right/ora
 `along say "Sure, coming over."`, then `robot offer <side> x y z [roll]` with a point ~0.25 m forward, ~0.15–0.20 m up,
 y toward the person; roll 0 for an object held upright, 90 for one held flat. Right before offer starts waiting say
 "Ready, put it between my jaws." (say first, then offer: it blocks until it holds the object, up to 90 s).
-Offer closes on its own once the object sits still between the jaws; then confirm with `along say` ("Got it.").
+Offer closes on its own once the object sits still between the jaws; then confirm with `along say` ("Got it.") and record
+it: `along held <side> toothbrush` (the state everyone sees; `along held <side> none` after releasing).
 If it returns holding false, say so and offer again once.
 
 **Holding and turning:** while holding, follow requests like "turn it so I can put toothpaste on": think about the

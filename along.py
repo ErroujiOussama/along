@@ -11,6 +11,7 @@ one long-running Codex session (tmux "along", persona prompts/along.md) which ac
                          is it between the jaws. Scene px answers fit `robot locate`.
   along say "text"       speak (ElevenLabs; espeak-ng without a key); the mic is muted meanwhile
   along tell "text"      send a line to the Codex session (what the daemon does with speech)
+  along held left toothbrush | along held left none    record what an arm holds (keeps along active; shown on /along)
   along wake             force the running daemon awake (debugging)
 Debug page: `robot stream` -> http://localhost:8101/along (boxes, state, conversation, Codex pane, type-as-voice).
 Keys: ELEVENLABS_API_KEY in the environment or in .env (repo). Optional ALONG_VOICE (voice id), ALONG_MIC (pw source; default the C920 mic).
@@ -18,10 +19,11 @@ Keys: ELEVENLABS_API_KEY in the environment or in .env (repo). Optional ALONG_VO
 import json, os, subprocess, sys, threading, time, wave, io
 HERE = os.path.dirname(os.path.abspath(__file__))
 SEEN, IDLE, MUTE = f"{HERE}/.along_seen.json", f"{HERE}/along_idle.json", f"{HERE}/.along_mute"
+HELD = f"{HERE}/.along_held.json"                        # {"left": "toothbrush"}: what each arm holds (set by the agent)
 EVENTS = f"{HERE}/.along_events.jsonl"                    # conversation + state history (debug page /along)
 TMUX, W, H = "along", 800, 450
 CODEX = ["codex", "--dangerously-bypass-approvals-and-sandbox", "--disable", "hooks", "-C", HERE,
-         "-m", "gpt-6.2-sol", "-c", "model_auto_compact_token_limit=200000"]
+         "-m", "gpt-6.2-sol", "-c", "model_auto_compact_token_limit=100000"]
 
 
 def env(k, d=None):
@@ -208,6 +210,13 @@ def novel(dets, base):
     return [d for d in dets if d["conf"] >= 0.35 and not any(b["label"] == d["label"] and iou(b["box"], d["box"]) > 0.3 for b in base)]
 
 
+def rd_held():
+    try:
+        return json.load(open(HELD))
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
 def engaged(bot):
     """Arms tied up with an object of interest (the detector often misses an object in the jaws):
     'holding' = HOLDING or jaws shut with the arm raised (thin things close fully), 'offering' = jaws open, arm raised."""
@@ -215,8 +224,9 @@ def engaged(bot):
         tg, why = bot.state()["target"], []
         for side in ("left", "right"):
             a = getattr(bot, side); up = a.tip()[2] > 0.12; g = tg[f"{side}_gripper"]
-            if a.holding() or (up and g <= 10):
-                why.append(f"{side} holding")
+            what = rd_held().get(side)
+            if what or a.holding() or (up and g <= 10):
+                why.append(f"{side} holding {what or 'something'}")
             elif up and g >= 25:
                 why.append(f"{side} offering")
         return why
@@ -270,7 +280,7 @@ def run():
             tell("[along] Back to idle: no new object in the scene and nothing in the jaws; the mic is off. "
                  "Park the arms (robot step \"recall rest\"), silently.")
         json.dump({"t": t, "active": active, "why": why, "listening": mic.on.is_set(), "speaking": muted(), "all": dets,
-                   "new": new, "hits": hits, "last_new": last_new, "last_voice": last_voice}, open(SEEN, "w"))
+                   "new": new, "held": rd_held(), "hits": hits, "last_new": last_new, "last_voice": last_voice}, open(SEEN, "w"))
         time.sleep(max(0.0, 0.5 - (time.time() - t)))
 
 
@@ -314,6 +324,13 @@ def main():
     a = sys.argv[1:] or ["help"]
     if a[0] == "run":
         run()
+    elif a[0] == "held":                                  # along held left toothbrush | along held left none
+        h = rd_held(); side, what = a[1], " ".join(a[2:])
+        if what in ("", "none", "nothing"):
+            h.pop(side, None)
+        else:
+            h[side] = what
+        json.dump(h, open(HELD, "w")); event("held", json.dumps(h)); print(h)
     elif a[0] == "look":
         print(look(" ".join(a[1:])))
     elif a[0] == "say":
