@@ -6,6 +6,8 @@ one long-running Codex session (tmux "along", persona prompts/along.md) which ac
   along run              the daemon (vision + mic + Codex bridge)
   along idle             store what the scene shows now as the idle baseline (empty table + fixtures)
   along see              latest detections (label, conf, scene px in the 800x450 tile for `robot locate`)
+  along look "question"  ask GPT 6.1 terra about the current scene + wrist frames (~5 s): what is where, orientation,
+                         is it between the jaws. Scene px answers fit `robot locate`.
   along say "text"       speak (ElevenLabs; espeak-ng without a key); the mic is muted meanwhile
   along tell "text"      send a line to the Codex session (what the daemon does with speech)
   along wake             force the running daemon awake (debugging)
@@ -259,10 +261,35 @@ def run():
         time.sleep(max(0.0, 0.5 - (time.time() - t)))
 
 
+def look(question, cams=("scene", "left", "right")):
+    """Ask a vision model (GPT 6.1 terra through `codex exec`, ~5 s) about the newest frames. Scene is sent as the
+    800x450 tile, so pixel answers go straight into `robot locate u v z`."""
+    import cv2, tempfile
+    from so101 import Robot
+    bot, d, imgs = Robot(), tempfile.mkdtemp(prefix="along_look_"), []
+    for c in cams:
+        try:
+            p = f"{d}/{c}.jpg"; cv2.imwrite(p, bot.thumb(c, *((W, H) if c == "scene" else (640, 360)))); imgs.append(p)
+        except Exception as e:
+            log("look: no", c, e)
+    brief = ("Images: " + ", ".join(f"{os.path.basename(p)[:-4]} camera" for p in imgs) + ". The scene camera (800x450) faces two "
+             "robot arms from the front: orange (right arm) on image-left, white (left arm) on image-right; left/right "
+             "wrist cameras look out of each gripper between its jaws. Give pixel coordinates in the scene image when "
+             "you mention where something is. Answer briefly and concretely.\n\nQuestion: " + question)
+    event("look", question)
+    r = subprocess.run(["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-m", "gpt-6.1-terra", "-c", "model_reasoning_effort=low",
+                        "-o", f"{d}/answer.txt", "-i", *imgs], input=brief, capture_output=True, text=True, timeout=120)
+    ans = open(f"{d}/answer.txt").read().strip() if os.path.exists(f"{d}/answer.txt") else r.stdout.strip()[-2000:]
+    event("seen", ans)
+    return ans
+
+
 def main():
     a = sys.argv[1:] or ["help"]
     if a[0] == "run":
         run()
+    elif a[0] == "look":
+        print(look(" ".join(a[1:])))
     elif a[0] == "say":
         say(" ".join(a[1:]))
     elif a[0] == "wake":                                  # debug: force the daemon awake (see .along_force)

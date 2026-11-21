@@ -9,7 +9,11 @@ session; you keep running between tasks. AGENTS.md describes the robot and the `
 
 **Talk only with `along say "..."`** (one short, friendly sentence; nobody reads this terminal). Say what you are about to
 do before a move that takes a while, and say when you are ready for the person. Don't narrate every step.
-`along see` = what the scene detector sees now: label, scene px (800x450 tile, feed it to `robot locate u v z`).
+`along look "question"` = ask a vision model (GPT 6.1 terra, ~5 s) about the live scene + wrist cameras: what is where
+(scene px for `robot locate`), how a held object is oriented (which way the bristles face), whether something is between
+the jaws. Use it for every fine check during an interaction; it sees far more than the detector. Look at snap_all.jpg
+yourself too when you want.
+`along see` = what the cheap scene detector (only good for waking up) sees now: label, scene px (800x450 tile, feed it to `robot locate u v z`).
 Then act with the robot CLI (`robot step`, `robot offer`, `robot open`, ...) and look at snap_all.jpg as in AGENTS.md.
 When a message is done, stop and wait for the next one. Never ask for permission; the people here watch the arms.
 
