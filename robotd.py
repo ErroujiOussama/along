@@ -191,7 +191,7 @@ BLOCK_DEG, BLOCK_S = 5.0, 0.4  # arm joint pushed > BLOCK_DEG off but not moving
 events = []                  # recent BLOCKED events (dicts with "t")
 from collections import deque
 traj = deque(maxlen=6000)   # (t, measured in KEYS order), 10 min at 10 Hz
-collide_cfg = {"on": True, "handover": False, "objects": []}   # objects: agent-placed (world frame), jaws may touch
+collide_cfg = {"on": SIM, "handover": False, "objects": []}   # objects: agent-placed (world frame), jaws may touch
 
 
 def control_loop():
@@ -433,18 +433,18 @@ def guarded(side, goal_q, path=None):
     """Waypoints for `side` to joint goal goal_q: the given/straight path if it passes guard(), else a planned
     detour (planner.py). -> (waypoints, how)."""
     path = path or [{f"{side}_{j}": float(v) for j, v in zip(collide.J, goal_q)}]
+    with lock:
+        start, tgt = dict(command), dict(target)
+    e = collide.check(start, [{**tgt, **path[0]}] + path[1:], collide_setup())   # planning uses the model even when live checks are off
+    if not e:
+        return path, "straight"
+    import planner
     try:
-        guard(path); return path, "straight"
-    except ValueError as e:
-        import planner
-        with lock:
-            start = {k: command[k] for k in command}
-        try:
-            wps = planner.plan(side, start, goal_q, LIMITS, collide_setup())
-        except ValueError as e2:
-            raise ValueError(f"{e} (and no detour: {e2})")
-        guard(wps)
-        return wps, f"detour ({len(wps)} waypoints) around {str(e).split(' would')[0].removeprefix('refused: ')}"
+        wps = planner.plan(side, start, goal_q, LIMITS, collide_setup())
+    except ValueError as e2:
+        log(f"{e} (and no detour: {e2})")
+        raise ValueError(f"{e} (and no detour: {e2})")
+    return wps, f"detour ({len(wps)} waypoints) around {e.split(' would')[0].removeprefix('refused: ')}"
 
 
 def collide_state(m):
@@ -570,10 +570,7 @@ def handle(parts):
             if err > 0.015 or jump > 12:
                 raise ValueError(f"ik fails at waypoint {i}/{n}: err={err*1000:.0f}mm jump={jump:.0f}deg")
             path.append({f"{side}_{j}": float(v) for j, v in zip(J, qn)}); q = qn
-        if collide_cfg["on"]:
-            path, how = guarded(side, q, path)
-        else:
-            how = "straight"
+        path, how = guarded(side, q, path)
         with lock:
             plan[:] = path
         log(f"goto {side} {xyz.round(3).tolist()} ({len(path)} waypoints, {how})")
@@ -595,7 +592,7 @@ def handle(parts):
         saved = allp[parts[1]]
         side = parts[2] if len(parts) > 2 else ""
         goal = {k.removesuffix(".pos"): clamp(k.removesuffix(".pos"), v) for k, v in saved.items() if k.startswith(side)}
-        if side and collide_cfg["on"]:   # one arm: take a detour if the direct move would hit something
+        if side:   # one arm: take a detour if the direct move would hit something
             wps, how = guarded(side, [goal[f"{side}_{j}"] for j in collide.J])
             if how != "straight":
                 with lock:

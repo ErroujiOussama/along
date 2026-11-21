@@ -208,7 +208,7 @@ class Robot:
                 if c == "wait":     # a gripper closed on something never reaches its target: not news
                     r = {"off_target": {k: v for k, v in self.wait().items() if not (k.endswith("gripper") and v[0] <= 10)}}
                 elif c.split()[0] == "nudge":
-                    _, sd, *d = c.split(); r = {"joints_moved": getattr(self, sd).nudge(*map(float, d))}
+                    raise ValueError("nudge is disabled: plan the move and use goto <side> x y z (m)")
                 else:
                     r = self.call(c)
                     if c.split()[0] == "goto":   # runs in the background (the next command would cancel it): finish it
@@ -280,7 +280,7 @@ class Robot:
             real = self.state()
             sim.call("collide off"); sim.call("speed 360")
             sim.call("pose " + json.dumps(real["target"])); sim.wait(timeout=30)
-            sim.call(f"collide {'on' if real['collide']['on'] else 'off'}")
+            sim.call("collide on")   # the plan check always uses the collision model
             sim.call(f"handover {'on' if real['collide']['handover'] else 'off'}")
             sim.call("object set " + json.dumps(real["collide"].get("objects", [])))
             sim.tag = self.tag = time.strftime("%H%M%S")
@@ -290,6 +290,63 @@ class Robot:
             return {"sim": r, "ok": ok, "real": self.step(cmds) if ok and not dry else None}
         finally:
             self.tag = None
+
+    def locate(self, u, v, z=None):
+        """Scene-camera pixel (u, v) in the 800x450 scene image (bottom of snap_all.jpg: subtract 225 from y) -> the point
+        where that ray meets height z (m, world = left base frame; default the table) in both arms' base frames."""
+        import sys, numpy as np
+        sys.path.insert(0, HERE)
+        import collide
+        s = collide.setup(); c = json.load(open(os.path.join(HERE, "scene.json")))["scene_camera"]
+        f, up = np.array(c["forward"]), np.array(c["up"]); r = np.cross(f, up); (w, h), fp = c["image_size_px"], c["focal_px"]
+        d = f + r * (u - w / 2) / fp - up * (v - h / 2) / fp
+        z = s["table_z"] if z is None else z
+        p = np.array(c["position"]) + d * (z - c["position"][2]) / d[2]
+        out = {}
+        for side in ("left", "right"):
+            q = np.linalg.inv(collide.base_T(side, s)) @ np.r_[p, 1.0]
+            out[side] = [round(float(x), 3) for x in q[:3]]
+        return out
+
+    def scan(self, side="right", image=None):
+        """Look around with one arm's wrist camera from a few poses near `ready` (other arm unchanged), then back to ready.
+        -> {"image": scan.jpg (one labelled tile per view + the scene camera), "views": [{"pan", "cam_xyz", "cam_dir"}]}
+        cam_xyz/dir are in that arm's base frame (m): use them to triangulate the object together with `locate`."""
+        import sys, cv2, numpy as np
+        sys.path.insert(0, HERE)
+        import collide
+        st = collide.setup(); ready = json.load(open(os.path.join(HERE, "poses.json")))["ready"]
+        q0 = np.array([ready[f"{side}_{j}"] for j in collide.J])
+        cam = st["mounted"].get(side, collide.CAPS["wrist_cam"]); cc = (np.array(cam[1]) + np.array(cam[2])) / 2
+        views, tiles = [], []
+        self.recall("ready", side)
+        for pan, lift, wrist in ((0, 0, 0), (-30, 0, 0), (30, 0, 0), (0, -15, -30)):
+            q = q0 + [pan, lift, 0, wrist, 0]
+            goal = {f"{side}_{j}": round(float(v), 2) for j, v in zip(collide.J, q)}
+            now = self.state()["target"]
+            if collide.check(now, [{**now, **goal}], st):
+                continue                      # this view would hit something (the other arm?): skip it
+            self.set(goal)
+            time.sleep(0.4)
+            m = self.state()["measured"]; F = collide.frames(np.array([m[f"{side}_{j}"] for j in collide.J]))[0, 5]
+            p, d = (F @ np.r_[cc, 1])[:3], F[:3, :3] @ [0, 0, -1.0]
+            v = {"pan": pan, "lift": lift, "wrist": wrist, "cam_xyz": [round(float(x), 3) for x in p],
+                 "cam_dir": [round(float(x), 2) for x in d]}
+            views.append(v)
+            try:
+                t = self.thumb(side, 400, 225).copy()
+            except RobotError as e:
+                t = tile(str(e), 400, 225)
+            for col, th in (((0, 0, 0), 4), ((255, 255, 255), 1)):
+                cv2.putText(t, f"{side} pan{pan:+d} lift{lift:+d} wrist{wrist:+d}", (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, th)
+                cv2.putText(t, f"cam {v['cam_xyz']} dir {v['cam_dir']}", (6, 216), cv2.FONT_HERSHEY_SIMPLEX, 0.42, col, th)
+            tiles.append(t)
+        self.recall("ready", side)
+        path = image or os.path.join(HERE, "scan.jpg")
+        tiles += [tile("view skipped (collision)", 400, 225)] * (4 - len(tiles))
+        img = np.vstack([np.hstack(tiles[:2]), np.hstack(tiles[2:]), self.mosaic(["scene"], 800, 450)])
+        cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return {"image": path, "views": views}
 
     def save(self, name):
         self.call(f"save {name}")

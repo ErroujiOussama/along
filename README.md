@@ -21,7 +21,7 @@ robot                            # state: target vs measured per joint, torque, 
 robot step "move right_elbow_flex -5; set right_gripper 20"   # run, wait until settled, snap_all.jpg + ~4 state lines
 robot step                       # just look: wrist cams on top (400x225), scene below (800x450) + joints, HOLDING, tip xyz + moved
 robot recall ready right         # from rest: gripper pointing down, tip 10 cm above the table (min 5.7 cm on the way)
-robot nudge right 2 0 -1         # tip dx dy dz cm (x fwd, y left, z up), ≤ 3 cm, ≤ 5°/joint sub-steps; also inside step "..."
+robot scan right                 # look around with the wrist cam (4 views near ready) -> scan.jpg; robot locate u v [z]: scene pixel -> xyz
 robot ik right 0.3 0.05 0.06     # dry run: joint targets for a tip xyz, moves nothing
 robot move left elbow -5         # relative (deg; gripper %); `set` = absolute
 robot open right · robot close right · robot goto left 0.2 0 0.08 · robot tip left
@@ -44,7 +44,7 @@ from so101 import Robot
 bot = Robot()
 bot.left.move(elbow=-5); bot.right.goto(0.2, 0, 0.08); bot.left.torque(False); img = bot.frame()
 bot.step("move right_elbow_flex -5"); bot.snap_all(); bot.right.holding(); bot.cams()
-bot.right.nudge(1, 0, -0.5); bot.right.ik(0.3, 0.05, 0.06)
+bot.scan('right'); bot.locate(400, 300); bot.right.ik(0.3, 0.05, 0.06)
 ```
 
 `robot help` lists everything. Joints: pan lift elbow wrist roll gripper. Sides: left (white), right (orange).

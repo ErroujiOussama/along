@@ -9,8 +9,10 @@
   robot goto left 0.2 0 0.08             Cartesian (m, arm base frame), gripper down
   robot tip left                         gripper tip position (m) from the measured pose
   robot ik right 0.30 0.05 0.06          dry run: joint targets for that tip xyz (pointing down), moves nothing
-  robot nudge right 1 0 -0.5             move the tip dx dy dz cm (x forward, y arm's left, z up), keeps the
-                                         gripper orientation; refused if a joint would move > 5 deg
+  robot scan [right|left]                look around: the wrist cam from 4 poses near ready -> scan.jpg (labelled
+                                         camera xyz/direction per view, + scene camera); back to ready
+  robot locate u v [z]                   scene-image pixel (800x450) -> xyz where its ray meets height z (default table),
+                                         in both arm frames
   robot save ready | recall ready [left|right] | poses
   robot torque off left | torque on [all]   limp for hand-guiding (HOLD THE ARM) / hold the new pose
   robot snap [left|right|scene] [path]   camera frames (default all connected: snap_<cam>.jpg)
@@ -27,7 +29,7 @@
   [solid]                                add an object (m, that arm's base frame): the arm avoids it, the jaws may touch
                                          it (to grasp) unless `solid`; goto/recall detour around anything in the way
   robot stop | home | limits | speed 30
-  robot step ["move right_elbow_flex -5; nudge right 0 0 -1"]   agent loop: raw cmds (+ nudge), wait until settled,
+  robot step ["move right_elbow_flex -5; goto right 0.2 0 0.05"]   agent loop: raw cmds, wait until settled,
                                          then a few lines (joints, HOLDING = gripper closed on something,
                                          tip xyz m + how far it moved since the last step)
                                          + ONE image snap_all.jpg (left | right wrist 400x225 on top, scene 800x450 below)
@@ -329,7 +331,11 @@ def main(argv):
     elif cmd == "ik":
         print(json.dumps(getattr(bot, side(a)).ik(*map(float, a[2:5])))); return
     elif cmd == "nudge":
-        print(json.dumps(getattr(bot, side(a)).nudge(*map(float, a[2:5]), wait=wait))); return
+        sys.exit("nudge is disabled: plan the move and use goto <side> x y z (m), in one `robot plan`")
+    elif cmd == "scan":
+        print(json.dumps(bot.scan(side(a) if len(a) > 1 else "right"))); return
+    elif cmd == "locate":
+        print(json.dumps(bot.locate(*map(float, a[1:4])))); return
     elif cmd == "tip":
         print([round(v, 3) for v in getattr(bot, side(a)).tip()]); return
     elif cmd == "recall":
