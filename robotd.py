@@ -1,4 +1,4 @@
-"""robotd: the one process that owns both SO-101 arms and the camera.
+"""robotd: the one process that owns both SO-101 arms and the cameras.
 
 Run:   systemctl --user start robotd          (unit: robotd.service; logs: journalctl --user -u robotd -f)
 Talk:  so101.py / `robot` CLI                 (JSON lines over the unix socket ./robot.sock)
@@ -11,7 +11,7 @@ Design
   max_relative_target=2 (which clipped every goal to present+-2 deg and left loaded joints like the
   elbow without enough torque to lift the forearm), this gives the servo real effort but no wind-up.
 - Every target is clamped to the calibrated range of each joint.
-- One thread per wrist camera keeps the newest frame, so `snap` is instant.
+- One thread per camera (left, right wrist; scene) keeps the newest frame, so `snap` is instant.
 
 Commands (all joints: <side>_<joint>, side = left|right, joint = shoulder_pan, shoulder_lift,
 elbow_flex, wrist_flex, wrist_roll, gripper; degrees, gripper 0-100):
@@ -23,7 +23,8 @@ elbow_flex, wrist_flex, wrist_roll, gripper; degrees, gripper 0-100):
   goto <side> x y z             Cartesian straight line (m, arm base frame) via IK, pointing down
   stop                          freeze: target = measured, drop any plan
   save <name> / recall <name> [side] / poses     named poses in ./poses.json
-  snap [left|right] [path]      write newest wrist-camera frames (default both: ./snap_left.jpg, ./snap_right.jpg)
+  snap [cam] [path]             write newest camera frames (default all connected: ./snap_<cam>.jpg); cam = left|right|scene
+  cams                          per camera: ok (fresh frame), age_s, device
   thumb <side> <w> <h>          newest frame of that camera resized to w x h, raw BGR bytes base64 (terminal views)
   speed <deg_per_s>             change VEL
   home                          go to the pose captured at start
@@ -42,7 +43,9 @@ SIM = os.environ.get("SO101_SIM") == "1"         # fake arms, no camera: test th
 SOCK = os.environ.get("SO101_SOCK", f"{HERE}/{'sim' if SIM else 'robot'}.sock")
 LOG, POSES = f"{HERE}/{'sim' if SIM else 'robotd'}.log", f"{HERE}/{'sim_' if SIM else ''}poses.json"
 CAMS = {"left": "/dev/v4l/by-id/usb-icSpring_icspring_camera_20240307110322-video-index0",        # left wrist
-        "right": "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0"}  # right wrist
+        "right": "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0",  # right wrist
+        "scene": "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_DB9E36FF-video-index0"}                  # Logitech C920
+STALE = 2.0      # s without a new frame = camera counts as gone (unplugged)
 PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_{}-if00"
 SERIAL = {"left": "5B8E113306", "right": "5B61036524"}
 CALIB_DIR = f"{HERE}/calibration"                 # tools/calibrate.sh writes here; the only copy
@@ -256,8 +259,8 @@ def control_loop():
             next_t = time.perf_counter()
 
 
-# ---------- cameras (one on each wrist) ----------
-frames = {"left": None, "right": None}     # side -> (timestamp, BGR image), newest only
+# ---------- cameras (one per wrist + scene); replug-safe: reopen by by-id path when it comes back ----------
+frames = {name: None for name in CAMS}     # name -> (timestamp, BGR image), newest only
 
 
 def open_cam(dev):
@@ -279,24 +282,41 @@ def camera_loop(side):
         frames[side] = (t, f); time.sleep(0.1)
     if SIM:
         return
-    cam, warned = open_cam(CAMS[side]), False
+    dev, cam, up = CAMS[side], None, None
     while running:
+        if cam is None:
+            if not os.path.exists(dev):          # unplugged: wait for the by-id link to come back
+                if up is not False:
+                    log(f"WARN {side} camera: not connected ({dev})"); up = False
+                time.sleep(1); continue
+            cam = open_cam(dev)
         ok, f = cam.read()
         if ok:
-            frames[side] = (time.time(), f); warned = False
+            frames[side] = (time.time(), f)
+            if up is not True:
+                log(f"{side} camera: streaming"); up = True
         else:
-            if not warned:
-                log(f"WARN {side} camera: no frame, reopening"); warned = True
-            time.sleep(0.5); cam.release(); cam = open_cam(CAMS[side])
-    cam.release()
+            if up is not False:
+                log(f"WARN {side} camera: no frame, reopening"); up = False
+            cam.release(); cam = None; time.sleep(0.5)
+    if cam is not None:
+        cam.release()
 
 
 def get_frame(side):
     if side not in frames:
-        raise ValueError(f"unknown camera {side!r} (left|right)")
+        raise ValueError(f"unknown camera {side!r} ({'|'.join(CAMS)})")
     if frames[side] is None:
         raise ValueError(f"no {side} camera frame yet")
+    if time.time() - frames[side][0] > STALE:
+        raise ValueError(f"{side} camera: no frame for {time.time() - frames[side][0]:.0f} s (unplugged?)")
     return frames[side]
+
+
+def cams():
+    now = time.time()
+    return {n: {"ok": f is not None and now - f[0] <= STALE, "age_s": None if f is None else round(now - f[0], 1),
+                "dev": CAMS[n]} for n, f in frames.items()}
 
 
 # ---------- commands ----------
@@ -405,13 +425,15 @@ def handle(parts):
         return {"recall": parts[1]}
     if cmd == "snap":
         import cv2
-        sides = [parts[1]] if len(parts) > 1 else ["left", "right"]
+        sides = [parts[1]] if len(parts) > 1 else [n for n, c in cams().items() if c["ok"]]
         out, age = {}, {}
         for side in sides:
             t, img = get_frame(side)
             out[side] = parts[2] if len(parts) > 2 else f"{HERE}/snap_{side}.jpg"
             cv2.imwrite(out[side], img); age[side] = round(time.time() - t, 2)
-        return {"paths": out, "age_s": age}
+        return {"paths": out, "age_s": age, "missing": [n for n in CAMS if n not in out]}
+    if cmd == "cams":
+        return {"cams": cams()}
     if cmd == "thumb":
         import base64, cv2
         t, img = get_frame(parts[1])
@@ -462,18 +484,18 @@ def client(conn):
                 continue
             try:
                 reply = {"ok": True, **handle(parts)}
-                if parts[0] not in ("state", "limits", "poses", "thumb"):
+                if parts[0] not in ("state", "limits", "poses", "thumb", "cams"):
                     log(" ".join(parts) + " -> " + json.dumps(reply)[:200])
             except Exception as e:
                 reply = {"ok": False, "error": str(e)}
-                if parts[0] != "thumb":   # panels poll thumb ~10x/s; don't flood the log
+                if parts[0] not in ("thumb", "cams"):   # panels poll thumb ~10x/s; don't flood the log
                     log(f"ERR {' '.join(parts)}: {e}")
             f.write(json.dumps(reply) + "\n"); f.flush()
 
 
 signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=shutdown, daemon=True).start())
 signal.signal(signal.SIGINT, lambda *_: threading.Thread(target=shutdown, daemon=True).start())
-for _side in ("left", "right"):
+for _side in CAMS:
     threading.Thread(target=camera_loop, args=(_side,), daemon=True).start()
 threading.Thread(target=serve, daemon=True).start()
 log(f"robotd ready{' (SIM)' if SIM else ''}: {HZ} Hz, vel {VEL} deg/s, lead {LEAD} deg, P {P_GAIN}, KI {KI}; home=" +

@@ -111,17 +111,21 @@ class Robot:
         return self.call(f"speed {deg_per_s}")["vel"]
 
     def snap(self, side=None, path=None):
-        """Write the newest wrist-camera frames. side=None: both -> {side: path}; side given -> path."""
+        """Write the newest camera frames. side=None: all connected -> {cam: path}; cam given -> path."""
         if side is None:
             return self.call("snap")["paths"]
         return self.call(f"snap {side}" + (f" {path}" if path else ""))["paths"][side]
+
+    def cams(self):
+        """{name: {"ok": fresh frame, "age_s", "dev"}} for every camera robotd knows (left, right, scene)."""
+        return self.call("cams")["cams"]
 
     def frame(self, side):
         import cv2
         return cv2.imread(self.snap(side))
 
     def thumb(self, side, w, h):
-        """Newest frame of one wrist camera resized to w x h, as numpy BGR (cheap; for live previews)."""
+        """Newest frame of one camera (left|right|scene) resized to w x h, as numpy BGR (cheap; for live previews)."""
         import base64, numpy as np
         r = self.call(f"thumb {side} {w} {h}")
         return np.frombuffer(base64.b64decode(r["bgr"]), np.uint8).reshape(r["h"], r["w"], 3)

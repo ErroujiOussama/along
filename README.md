@@ -1,9 +1,9 @@
 # so101
 
-Two SO-101 follower arms and one camera on one laptop, behind a single daemon.
+Two SO-101 follower arms and three cameras on one laptop, behind a single daemon.
 
 ```
-arms + camera ← robotd.py (only bus owner, one shared state) ← so101.py (Python API) ← robot CLI · tui.py panel · agents
+arms + cameras ← robotd.py (only bus owner, one shared state) ← so101.py (Python API) ← robot CLI · tui.py panel · agents
 ```
 
 ## Setup
@@ -21,8 +21,9 @@ robot                            # state: target vs measured per joint, torque, 
 robot move left elbow -5         # relative (deg; gripper %); `set` = absolute
 robot open right · robot close right · robot goto left 0.2 0 0.08 · robot tip left
 robot torque off left            # limp for hand-guiding — HOLD THE ARM; `torque on left` holds the new pose
-robot save NAME · robot recall NAME [side] · robot stop · robot home · robot snap
-robot view [left|right]         # live video window of the wrist cameras (through robotd)
+robot save NAME · robot recall NAME [side] · robot stop · robot home
+robot snap [left|right|scene]    # newest frames → snap_<cam>.jpg (default all connected) · robot cams = which deliver
+robot view [cam ...]             # live video window, all cameras side by side (through robotd)
 robot stream [port]              # same as a web page (MJPEG, :8101); share: `tailcat serve 8101`, viewers `tailcat browse <addr>`
 robot raw "move right_elbow_flex -5; wait; snap"   # raw protocol; ';' chains, wait = until settled
 .venv/bin/python tui.py          # keyboard panel + live camera (v); shared as quack session so101-tui
@@ -46,7 +47,7 @@ bot.left.move(elbow=-5); bot.right.goto(0.2, 0, 0.08); bot.left.torque(False); i
 | `kin.py`, `so101.urdf` | FK/IK (URDF from TheRobotStudio/SO-ARM100, meshes stripped) |
 | `calibration/` | servo calibration, the only copy (`tools/calibrate.sh` rewrites it) |
 | `poses.json` | saved poses (`rest`, …) |
-| `test_sim.py` | 20 end-to-end checks against the sim |
+| `test_sim.py` | 24 end-to-end checks against the sim |
 | `tools/` | `scan.py` (which servo IDs answer), `calibrate.sh` — stop robotd first |
 | `AGENTS.md` | rules for coding agents driving the arms |
 
@@ -57,7 +58,8 @@ bot.left.move(elbow=-5); bot.right.goto(0.2, 0, 0.08); bot.left.torque(False); i
   A small integral term (≤ 6°) cancels gravity sag.
 - Torque off: the arm's targets follow your hand, and motion commands for it are rejected.
 - Power cut: robotd sends nothing; when the bus returns it re-applies servo settings and holds the current pose.
-- USB replug: it reopens the ports by their by-id paths every 2 s until the arms answer, then holds the current pose.
+- USB replug: it reopens the arm ports by their by-id paths every 2 s until the arms answer, then holds the current pose.
+  Cameras: a camera with no frame for 2 s reports unplugged (snap skips it, view/stream show a grey tile) and reopens by by-id path when it is back.
 - Crash: systemd restarts it, holding the pose it finds.
 - Knobs: `SO101_P` (servo P, 16), `SO101_VEL`, `SO101_LEAD`, `SO101_KI`.
 - No hardware: `SO101_SIM=1` on robotd and on any client (own socket and poses); then `SO101_SIM=1 .venv/bin/python test_sim.py`.
@@ -65,8 +67,8 @@ bot.left.move(elbow=-5); bot.right.goto(0.2, 0, 0.08); bot.left.torque(False); i
 ## Hardware
 
 - LEFT = white `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B8E113306-if00`; RIGHT = orange `…5B61036524-if00`. STS3215 ×6 each, 1 Mbaud.
-- Camera `/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0`, facing the arms (left arm on the image right).
-  Plug it into the laptop, not the hub (hub → USB 1.1, 160x120 purple frames).
+- Cameras (`/dev/v4l/by-id/…`): left wrist icSpring, right wrist Sonix USB2.0_CAM1, scene Logitech C920.
+  Plug the cameras into the laptop, not the hub (hub → USB 1.1, 160x120 purple frames).
 - Units: degrees, 0 = mid-range; gripper 0–100, 0 = closed.
 - Rest ≈ pan 0, lift -102, elbow 96, wrist_flex 60–67, gripper 3–5 (lift and elbow on their hard stops).
 

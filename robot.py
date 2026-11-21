@@ -10,9 +10,10 @@
   robot tip left                         gripper tip position (m) from the measured pose
   robot save ready | recall ready [left|right] | poses
   robot torque off left | torque on [all]   limp for hand-guiding (HOLD THE ARM) / hold the new pose
-  robot snap [left|right] [path]         wrist-camera frames (default both: snap_left.jpg, snap_right.jpg)
-  robot view [left|right]                live video window of the wrist cameras (default both side by side)
-  robot stream [port]                    the same video as a web page (MJPEG, default port 8101; share with tailcat)
+  robot snap [left|right|scene] [path]   camera frames (default all connected: snap_<cam>.jpg)
+  robot cams                             which cameras deliver frames (replug-safe: they come back by themselves)
+  robot view [cam ...]                   live video window, cameras side by side (default all)
+  robot stream [port [cam ...]]          the same as a web page (MJPEG, default port 8101; share with tailcat)
   robot stop | home | limits | speed 30
   robot raw "move left_elbow_flex -5; wait; snap"   raw robotd protocol, ';' chains, wait = until settled
   robot shutdown [here]                  release torque after going home (or right here)
@@ -25,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from so101 import Robot, RobotError, JOINTS
 
 SIDE = {"l": "left", "left": "left", "r": "right", "right": "right"}
+CAM = {**SIDE, "s": "scene", "scene": "scene"}
 
 
 def table(st):
@@ -51,20 +53,57 @@ def side(a, i=1):
         sys.exit("say which arm: left or right")
 
 
-def stream(bot, port):
-    """Serve both wrist cameras (through robotd) as MJPEG at http://0.0.0.0:port/."""
-    import cv2, numpy as np, threading
+class Mosaic:
+    """All cameras side by side (through robotd), 400x225 each. Survives camera replugs (grey tile)
+    and robotd restarts (reconnects)."""
+    W, H = 400, 225
+
+    def __init__(self, names=None):
+        self.bot, self.names = None, names
+
+    def frame(self):
+        import cv2, numpy as np
+        try:
+            self.bot = self.bot or Robot()
+            names = self.names or list(self.bot.cams())
+        except Exception as e:
+            self.bot = None
+            return self.tile(f"robotd: {e}"[:40], len(self.names or ["left", "right", "scene"]))
+        tiles = []
+        for n in names:
+            try:
+                tiles.append(self.bot.thumb(n, self.W, self.H).copy())
+            except RobotError as e:
+                tiles.append(self.tile(str(e)[:40]))
+            except Exception as e:          # socket gone: robotd restarting
+                self.bot = None
+                tiles.append(self.tile(f"robotd: {e}"[:40]))
+        for n, t in zip(names, tiles):
+            cv2.putText(t, n, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4)
+            cv2.putText(t, n, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        return np.hstack(tiles)
+
+    def tile(self, msg, n=1):
+        import cv2, numpy as np
+        t = np.full((self.H, self.W * n, 3), 60, np.uint8)
+        cv2.putText(t, msg, (10, self.H // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
+        return t
+
+
+def stream(names, port):
+    """Serve the cameras (through robotd) as MJPEG at http://0.0.0.0:port/."""
+    import cv2, threading
     from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-    latest, lock = [b""], threading.Lock()
+    latest, lock, mosaic = [b""], threading.Lock(), Mosaic(names)
 
     def grab():                             # one robotd reader, shared by all viewers
         while True:
             try:
-                img = np.hstack([bot.thumb(s, 400, 225) for s in ("left", "right")])
+                jpg = cv2.imencode(".jpg", mosaic.frame(), [cv2.IMWRITE_JPEG_QUALITY, 75])[1].tobytes()
                 with lock:
-                    latest[0] = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 75])[1].tobytes()
-            except Exception:
-                pass
+                    latest[0] = jpg
+            except Exception as e:
+                print("stream:", e, flush=True)
             time.sleep(1 / 12)
 
     class H(BaseHTTPRequestHandler):
@@ -74,7 +113,7 @@ def stream(bot, port):
         def do_GET(self):
             if self.path != "/stream":
                 body = (b"<html><title>so101</title><body style='margin:0;background:#111;color:#ccc;font:14px sans-serif'>"
-                        b"<p style='margin:6px'>so101 wrist cameras: left (icSpring) | right (Sonix)</p>"
+                        b"<p style='margin:6px'>so101 cameras: left wrist (icSpring) | right wrist (Sonix) | scene (C920)</p>"
                         b"<img src='/stream' style='width:100%'></body></html>")
                 self.send_response(200); self.send_header("Content-Type", "text/html")
                 self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
@@ -104,7 +143,7 @@ def main(argv):
     cmd = a[0] if a else "state"
     if cmd in ("-h", "--help", "help"):
         print(__doc__); return
-    bot = Robot()
+    bot = None if cmd in ("view", "stream") else Robot()     # view/stream (re)connect by themselves
     off = None
     if cmd == "state":
         st = bot.state(); print(json.dumps(st) if as_json else table(st)); return
@@ -115,21 +154,28 @@ def main(argv):
         except KeyboardInterrupt:
             return
     if cmd == "view":
-        import subprocess, numpy as np
-        sides = [side(a)] if len(a) > 1 else ["left", "right"]
-        w, h = 400, 225                     # robotd's thumb limit; ~12 fps
-        p = subprocess.Popen(["ffplay", "-loglevel", "error", "-window_title", "so101 " + " | ".join(sides),
-                              "-f", "rawvideo", "-pixel_format", "bgr24", "-video_size", f"{w * len(sides)}x{h}",
+        import subprocess
+        mosaic = Mosaic([CAM[x] for x in a[1:]] or None)
+        img = mosaic.frame()
+        p = subprocess.Popen(["ffplay", "-loglevel", "error", "-window_title", "so101 cameras",
+                              "-f", "rawvideo", "-pixel_format", "bgr24", "-video_size", f"{img.shape[1]}x{img.shape[0]}",
                               "-framerate", "12", "-fflags", "nobuffer", "-i", "-"], stdin=subprocess.PIPE)
         try:
             while p.poll() is None:
-                p.stdin.write(np.hstack([bot.thumb(s, w, h) for s in sides]).tobytes()); p.stdin.flush()
+                f = mosaic.frame()
+                if f.shape != img.shape:         # camera count changed: keep the window size
+                    import cv2; f = cv2.resize(f, (img.shape[1], img.shape[0]))
+                p.stdin.write(f.tobytes()); p.stdin.flush()
                 time.sleep(1 / 12)
         except (BrokenPipeError, KeyboardInterrupt):
             pass
         return
     if cmd == "stream":
-        stream(bot, int(a[1]) if len(a) > 1 else 8101); return
+        stream([CAM[x] for x in a[2:]] or None, int(a[1]) if len(a) > 1 else 8101); return
+    if cmd == "cams":
+        for n, c in bot.cams().items():
+            print(f"{n:6s} {'ok' if c['ok'] else 'MISSING':8s} age {c['age_s']} s  {c['dev']}")
+        return
     if cmd == "raw":
         for c in " ".join(a[1:]).split(";"):
             c = c.strip()
@@ -170,7 +216,7 @@ def main(argv):
         print(json.dumps(bot.limits(), indent=1)); return
     elif cmd == "snap":
         if len(a) > 1:
-            print(bot.snap(side(a), a[2] if len(a) > 2 else None))
+            print(bot.snap(CAM.get(a[1], a[1]), a[2] if len(a) > 2 else None))
         else:
             print("\n".join(f"{s}: {p}" for s, p in bot.snap().items()))
         return
