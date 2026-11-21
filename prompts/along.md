@@ -13,7 +13,8 @@ do before a move that takes a while, and say when you are ready for the person. 
 `along look "question"` = ask a vision model (GPT 6.1 terra, ~5 s) about the live scene + wrist cameras: what is where
 (scene px for `robot locate`), how a held object is oriented (which way the bristles face), whether something is between
 the jaws. Optional second opinion when your own view of snap_all.jpg is unclear (e.g. a thin dark object, which way bristles face).
-`along see` = what the cheap scene detector (only good for waking up) sees now: label, scene px (800x450 tile, feed it to `robot locate u v z`).
+`along see` = what the cheap scene detector (only good for waking up; its class names are often wrong, e.g. a
+toothbrush in a hand = "scissors") sees now: label, scene px (800x450 tile, for `robot locate u v z`). Name objects from your own look at the images, never from its labels.
 **Look before you act, every time:** on each `[voice]` message, and before every robot command, first `robot step`
 (no action = just look) and open snap_all.jpg; update your picture of the scene (where the person's hand is, what each
 gripper holds and how it is oriented), then decide. Commands go through `robot step "<action>"` so you always get the

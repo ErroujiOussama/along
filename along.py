@@ -308,11 +308,13 @@ def run():
         why = ([f"new object {t - last_new:.0f}s ago"] if t - last_new < GRACE else []) + arms
         if not active and why:
             active = True
-            names = ", ".join(f"{d['label']} at scene px ({d['px'][0]},{d['px'][1]})" for d in new) or ", ".join(arms)
-            log("WAKE:", names); event("wake", names)
-            say(f"Hi, I'm Along. Need a hand with the {new[0]['label']}?" if new else "Hi, I'm Along. Need a hand?")
+            names = (", ".join(f"scene px ({d['px'][0]},{d['px'][1]})" for d in new)
+                     and "something new at " + ", ".join(f"scene px ({d['px'][0]},{d['px'][1]})" for d in new)) or ", ".join(arms)
+            log("WAKE:", names, [d.get("label") for d in new]); event("wake", names)
+            say("Hi, I'm Along. Need a hand?")
             chime(880); mic.on.set()
-            tell(f"[along] Woke up: {names}. I already greeted them and asked if they need a hand; the mic is on "
+            tell(f"[along] Woke up: {names} (the cheap detector only says where; look at the image yourself to see what it is). "
+                 "I already greeted them and asked if they need a hand; the mic is on "
                  "while an object of interest is in the scene or in the jaws. Wait for their [voice] request.")
         elif active and not why:
             active = False
