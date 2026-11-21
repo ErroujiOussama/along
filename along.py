@@ -62,6 +62,10 @@ def event(kind, text=""):
 # ---------------------------------------------------------------- speech
 def say(text):
     event("say", text)
+    if os.path.exists(f"{HERE}/.along_live"):               # GPT-Live session up: it speaks this (its own voice)
+        with open(f"{HERE}/.along_live_out.jsonl", "a") as f:
+            f.write(json.dumps({"text": text}) + "\n")
+        return
     key = env("ELEVENLABS_API_KEY")
     open(MUTE, "w").write(str(time.time() + 30))
     try:
@@ -187,6 +191,130 @@ class Mic:
             event("ignored", t); return
         self.on_text(t)
 
+
+
+# ---------------------------------------------------------------- GPT-Live voice (speech-to-speech; Codex does the work)
+LIVE_ON, LIVE_OUT = f"{HERE}/.along_live", f"{HERE}/.along_live_out.jsonl"
+LIVE_PROMPT = """You are Along, the voice of two robot arms (left = white, right = orange) in a busy lab. You can't see
+or move anything yourself: every request to do, look at, hold, turn, press, release or check something goes to your
+hands (delegate it at once and say only "On it." or "Sure." while it runs: never claim it is done or happening before
+your hands report it). Your hands' reports arrive as commentary: say each one right away, nearly word for word
+(e.g. "Ready, put it between my jaws." is an instruction for the person and must be said).
+Talk only when someone talks to you (they say "Along" or answer you); ignore other chatter in the room.
+Be quick and casual, one short sentence. Never talk about safety, fingers or injuries, never ask "are you sure":
+the people here know what they are doing. Just do it."""
+
+
+def mic_source():
+    return env("ALONG_MIC") or next((l.split()[1] for l in subprocess.run(["pactl", "list", "short", "sources"],
+           capture_output=True, text=True).stdout.splitlines() if "C920" in l and "input" in l), None)
+
+
+class LiveVoice:
+    """GPT-Live session while switched on: C920 mic -> GPT-Live -> speaker. Its delegations go to Codex as [voice] lines;
+    what Codex says (`along say`) comes back as commentary that GPT-Live speaks. Same fields as Mic for the state file."""
+    RATE = 24000
+
+    def __init__(self, on_text):
+        self.on, self.on_text, self.phase, self.prob, self.stt_busy = threading.Event(), on_text, "off", 0.0, False
+        self.ws, self.deleg, self.heard, self.speak_until = None, None, "", 0.0
+        threading.Thread(target=self.loop, daemon=True).start()
+
+    def loop(self):
+        while True:
+            self.on.wait()
+            try:
+                self.session()
+            except Exception as e:
+                log("live error", e); event("error", f"live: {e}"); time.sleep(2)
+            self.ws, self.phase = None, "off"
+            try:
+                os.remove(LIVE_ON)
+            except FileNotFoundError:
+                pass
+
+    def send(self, **e):
+        import uuid
+        self.ws.send(json.dumps({"event_id": str(uuid.uuid4()), **e}))
+
+    def session(self):
+        import base64
+        from websockets.sync.client import connect
+        ws = self.ws = connect("wss://api.openai.com/v1/live/sessions", open_timeout=15, max_size=None,
+                               additional_headers={"Authorization": f"Bearer {env('OPENAI_API_KEY')}"})
+        self.send(type="session.start", session={"model": env("ALONG_LIVE_MODEL", "gpt-live-1.1"), "instructions": LIVE_PROMPT,
+                  "audio": {"format": {"type": "audio/pcm", "rate": self.RATE}, "output": {"voice": env("ALONG_LIVE_VOICE", "marin")}},
+                  "delegation": {"type": "client"},
+                  "input": [{"type": "message", "role": "developer", "content": [{"type": "input_text",
+                             "text": "Greet them now in a few words: you are Along and can lend a hand."}]}]})
+        open(LIVE_ON, "w").write(str(os.getpid())); open(LIVE_OUT, "w").close()
+        fmt = ["--raw", "--rate", str(self.RATE), "--channels", "1", "--format", "s16"]
+        src = mic_source()
+        mic = subprocess.Popen(["pw-record", *fmt, *(["--target", src] if src else []), "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        spk = subprocess.Popen(["pw-play", *fmt, "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        stop = threading.Event()
+
+        def pump_mic():                                   # 40 ms chunks; silence while we talk (no echo of ourselves)
+            while not stop.is_set():
+                b = mic.stdout.read(self.RATE * 2 // 25)
+                if not b:
+                    return
+                if time.time() < self.speak_until + 0.3:
+                    b = bytes(len(b))
+                try:
+                    self.send(type="session.input_audio.append", audio=base64.b64encode(b).decode())
+                except Exception:
+                    return
+
+        def pump_out():                                   # `along say` lines -> spoken commentary
+            pos = 0
+            while not stop.is_set():
+                time.sleep(0.1)
+                try:
+                    lines = open(LIVE_OUT).read()[pos:]
+                except FileNotFoundError:
+                    continue
+                for l in lines.splitlines():
+                    if l.strip():
+                        self.send(type="session.commentary.append", delegation_id=self.deleg, content=json.loads(l)["text"])
+                pos += len(lines)
+        started, said = False, ""
+        try:
+            for raw in ws:
+                if not self.on.is_set():
+                    break
+                e = json.loads(raw); k = e.get("type")
+                if k == "session.started" and not started:
+                    started = True; self.phase = "listening"; log("live session", e["session"]["id"])
+                    threading.Thread(target=pump_mic, daemon=True).start()
+                    threading.Thread(target=pump_out, daemon=True).start()
+                elif k == "session.output_audio.delta":
+                    if self.heard.strip() and self.phase == "speech":     # a turn without a delegation (chat)
+                        event("heard", self.heard.strip() + "  (chat)"); self.heard = ""
+                    b = base64.b64decode(e["delta"]); spk.stdin.write(b); spk.stdin.flush()
+                    self.speak_until = max(self.speak_until, time.time()) + len(b) / (2 * self.RATE)
+                    self.phase = "muted"
+                elif k == "session.output_transcript.delta":
+                    said += e["delta"]
+                elif k == "session.input_transcript.delta":
+                    self.heard += e["delta"]; self.phase = "speech"
+                elif k == "session.delegation.created":
+                    self.deleg, req, self.heard, self.phase = e["delegation"]["id"], self.heard.strip(), "", "listening"
+                    self.on_text(req or "(the person asked for something; look and act)")
+                elif k == "error":
+                    log("live:", e); event("error", f"live: {e.get('error', e)}")
+                if time.time() > self.speak_until + 0.3:
+                    if self.phase == "muted":
+                        self.phase = "listening"
+                    if said.strip():
+                        event("live", said.strip()); said = ""
+        finally:
+            stop.set()
+            try:
+                self.send(type="session.close"); ws.close()
+            except Exception:
+                pass
+            mic.kill(); spk.stdin.close(); spk.kill(); log("live session closed")
 
 # ---------------------------------------------------------------- codex bridge
 def tmux(*a, **k):
@@ -334,24 +462,29 @@ def run_manual():
 
     def heard(text):
         nonlocal last_voice
-        last_voice = time.time(); tell(f"[voice] {text}")
-    mic = Mic(heard)
+        last_voice = time.time()
+        if live:
+            event("heard", text)
+        tell(f"[voice] {text}")
+    live = bool(env("OPENAI_API_KEY")) and env("ALONG_VOICE_BACKEND", "live") == "live"
+    mic = LiveVoice(heard) if live else Mic(heard)
     if not env("ALONG_DRY"):
         codex_up()
-    log("off; waiting for `along on`")
+    log(f"off ({'GPT-Live' if live else 'ElevenLabs'} voice); waiting for `along on`")
     while True:
         t, want = time.time(), os.path.exists(ON)
         if want and not on:
             on = True; log("ON"); event("wake", "switched on")
-            say("Hi, I'm Along. Need a hand?")
+            if not live:
+                say("Hi, I'm Along. Need a hand?")
             chime(880); mic.on.set()
-            tell("[along] Switched on by hand; I already greeted them and the mic is on. Look at the scene and wait for their [voice] request.")
+            tell("[along] Switched on; the mic is on and they were greeted. Wait for [voice] requests.")
         elif on and not want:
             on = False; mic.on.clear(); log("OFF"); event("idle", "switched off")
             tell("[along] Switched off; the mic is off. If nothing is held, park the arms (robot step \"recall rest\"), silently.")
         json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
                    "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
-                   "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice}, open(SEEN, "w"))
+                   "voice": "GPT-Live" if live else "ElevenLabs", "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice}, open(SEEN, "w"))
         time.sleep(0.2)
 
 

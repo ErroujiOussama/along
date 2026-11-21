@@ -20,7 +20,7 @@ table{width:100%;border-collapse:collapse;font-size:12px} td,th{padding:2px 6px;
 th{color:var(--dim);font-weight:normal} tr.new td:first-child{color:var(--ok)}
 #conv{height:340px;overflow:auto;font-size:13px;display:flex;flex-direction:column;gap:3px}
 .ev{display:grid;grid-template-columns:62px 52px 1fr;gap:6px} .ev .t{color:var(--dim);font-size:11px}
-.ev .k{font-size:11px;text-transform:uppercase} .heard .k{color:var(--blue)} .say .k{color:var(--ok)}
+.ev .k{font-size:11px;text-transform:uppercase} .heard .k{color:var(--blue)} .say .k,.live .k{color:var(--ok)} .live .x{color:#fff}
 .tell .k,.tell .x{color:var(--dim)} .wake .k,.idle .k{color:var(--acc)} .error .k,.error .x{color:var(--bad)}
 .ignored .k,.ignored .x{color:#555} .say .x{color:#fff} .look .k,.seen .k{color:#d2a8ff} .seen .x{color:#e5d4ff} .heard .x{color:#cfe3ff}
 pre{margin:0;height:300px;overflow:auto;font-size:11px;background:#0a0a0a;padding:6px;border-radius:4px;white-space:pre-wrap}
@@ -75,12 +75,12 @@ async function poll() {
     const b = $('banner'), why = (s?.why || []).join(', ');
     let cls, big, small;
     if (!d.daemon || !s || age > 5) { cls = 'down'; big = 'NOT RUNNING'; small = d.daemon ? `daemon state ${age?.toFixed(0)} s old` : 'along run is not running: nothing is watched or heard'; }
-    else if (!s.active && s.manual) { cls = 'idle'; big = 'OFF · mic OFF'; small = 'not listening. Press "Along ON" to switch it on'; }
+    else if (!s.active && s.manual) { cls = 'idle'; big = `OFF · mic OFF${s.voice ? ' · ' + s.voice : ''}`; small = 'not listening. Press "Along ON" to switch it on'; }
     else if (!s.active) { cls = 'idle'; big = 'IDLE · mic OFF'; small = `not listening. Wakes on something new in the wake zone (change ${((s.change||0)*100).toFixed(1)}%, needs >2% in 3 of 4 frames; hits ${(s.hits||[]).filter(Boolean).length}/4)`; }
     else if (s.mic === 'muted') { cls = 'muted'; big = 'ACTIVE · Along is talking (mic muted)'; small = 'because: ' + why; }
     else if (s.stt) { cls = 'stt'; big = 'ACTIVE · transcribing…'; small = 'because: ' + why; }
     else if (s.mic === 'speech') { cls = 'speech'; big = 'ACTIVE · hearing speech'; small = 'because: ' + why; }
-    else { cls = 'listening'; big = 'ACTIVE · LISTENING'; small = (s.reply_open > 0 ? `reply window open ${s.reply_open.toFixed(0)} s: just talk` : 'start with "Along, …"') + ' · because: ' + why; }
+    else { cls = 'listening'; big = 'ON · LISTENING' + (s.voice ? ' · ' + s.voice : ''); small = (s.reply_open > 0 ? `reply window open ${s.reply_open.toFixed(0)} s: just talk` : 'start with "Along, …"') + ' · because: ' + why; }
     b.className = cls; b.innerHTML = `<span>${big}</span><span id="vad" title="voice probability"><i style="width:${Math.round((s?.vad||0)*100)}%"></i></span><small>${esc(small)}</small>`;
     $('age').textContent = s ? `${age.toFixed(1)} s old · ${d.idle.length} baseline boxes` + ` · active because: ${(s.why || []).join(', ') || 'nothing (idle: mic off)'}` : 'no detections yet (along run not started)';
     const nb = new Set((s?.new || []).map(x => x.box.join()));
@@ -91,7 +91,7 @@ async function poll() {
       lastEv = d.events[d.events.length - 1].t;
       const show = $('showtell').checked;
       $('conv').innerHTML = d.events.filter(e => show || e.kind !== 'tell').map(e =>
-        `<div class="ev ${e.kind}"><span class="t">${hm(e.t)}</span><span class="k">${{heard: 'you', say: 'along', tell: '→codex', held: 'state', ignored: 'chatter', look: 'look?', seen: 'terra'}[e.kind] || e.kind}</span><span class="x">${esc(e.text)}</span></div>`).join('');
+        `<div class="ev ${e.kind}"><span class="t">${hm(e.t)}</span><span class="k">${{heard: 'you', say: 'along', tell: '→codex', held: 'state', ignored: 'chatter', look: 'look?', seen: 'terra', live: 'voice'}[e.kind] || e.kind}</span><span class="x">${esc(e.text)}</span></div>`).join('');
       if (stick) $('conv').scrollTop = 1e9;
     }
     const p = $('codex'), atEnd = p.scrollTop + p.clientHeight > p.scrollHeight - 30;
