@@ -14,6 +14,12 @@ one long-running Codex session (tmux "along", persona prompts/along.md) which ac
   along tell "text"      send a line to the Codex session (what the daemon does with speech)
   along held left toothbrush | along held left none    record what an arm holds (keeps along active; shown on /along)
   along wake             force the running daemon awake (debugging)
+Skills (one call per request; each ends with a robot step: state lines + snap_all.jpg):
+  along hold <side> [what] [flat] [x y z]   offer + wait + close + record (+ speech); flat = jaws up/down
+  along release <side>   open, then recall ready (+ "Releasing.")
+  along turn <side> <deg> | along tilt <side> <deg>   wrist roll | wrist flex (+ tips down)
+  along press <side> x y z [cm]   push straight down on a point (pump, button), default 4 cm past it, back up
+  along park             arms holding nothing -> rest
 Debug page: `robot stream` -> http://localhost:8101/along (boxes, state, conversation, Codex pane, type-as-voice).
 Keys: ELEVENLABS_API_KEY in the environment or in .env (repo). Optional ALONG_VOICE (voice id), ALONG_MIC (pw source; default the C920 mic).
 """
@@ -26,7 +32,8 @@ TMUX, W, H = "along", 800, 450
 ROI, CHANGE = (150, 60, 650, 430), 0.02                    # centre of the table (scene px) where new things wake Along
 BG = f"{HERE}/along_idle_bg.npy"
 CODEX = ["codex", "--dangerously-bypass-approvals-and-sandbox", "--disable", "hooks", "-C", HERE,
-         "-m", "gpt-6.2-sol", "-c", "model_auto_compact_token_limit=100000"]
+         "-m", os.environ.get("ALONG_MODEL", "gpt-6.1-terra"), "-c", "model_reasoning_effort=low",
+         "-c", "model_auto_compact_token_limit=100000"]
 
 
 def env(k, d=None):
@@ -441,6 +448,64 @@ def look(question, cams=("scene", "left", "right")):
 
 
 
+
+# ---------------------------------------------------------------- skills: one call per spoken request
+def rstep(cmds=""):
+    """`robot step` (moves, waits, writes snap_all.jpg) -> its text."""
+    return subprocess.run(["robot", "step", cmds] if cmds else ["robot", "step"], capture_output=True, text=True).stdout.strip()
+
+
+def say_bg(text):
+    threading.Thread(target=say, args=(text,)).start()
+
+
+def set_held(side, what):
+    h = rd_held()
+    h.pop(side, None) if what in ("", "none", "nothing") else h.update({side: what})
+    json.dump(h, open(HELD, "w")); event("held", json.dumps(h))
+
+
+HOLD_AT = {"left": (0.25, -0.03, 0.17), "right": (0.25, 0.03, 0.17)}    # in front of the arm, at hand height
+
+
+def skill(a):
+    """along hold|release|turn|press|park ...: whole requests in one call, no questions asked."""
+    cmd, side = a[0], (a[1] if len(a) > 1 else "")
+    if side and side not in ("left", "right"):
+        sys.exit("side = left | right")
+    if cmd == "hold":                               # along hold <side> [what] [flat] [x y z]
+        rest = a[2:]; flat = "flat" in rest; rest = [r for r in rest if r != "flat"]
+        nums = [float(r) for r in rest if r.replace(".", "", 1).lstrip("-").isdigit()]
+        what = " ".join(r for r in rest if not r.replace(".", "", 1).lstrip("-").isdigit()) or "object"
+        x, y, z = nums[:3] if len(nums) >= 3 else HOLD_AT[side]
+        say_bg("Ready, put it between my jaws.")
+        for attempt in (1, 2):
+            r = json.loads(subprocess.run(["robot", "offer", side, str(x), str(y), str(z), "90" if flat else "0"],
+                                          capture_output=True, text=True).stdout or '{"holding": false}')
+            if r.get("holding"):
+                set_held(side, what); say_bg("Got it."); break
+            if attempt == 1:
+                say_bg("Missed it, once more.")
+        print(f"hold {side}: {r}"); print(rstep())
+    elif cmd == "release":                          # along release <side>
+        say_bg("Releasing.")
+        print(rstep(f"set {side}_gripper 45")); time.sleep(1.0); set_held(side, "none")
+        print(rstep(f"recall ready {side}"))
+    elif cmd == "turn":                             # along turn <side> <deg>   (wrist roll, + / -)
+        print(rstep(f"move {side}_wrist_roll {float(a[2])}"))
+    elif cmd == "tilt":                             # along tilt <side> <deg>   (wrist flex, + tips down)
+        print(rstep(f"move {side}_wrist_flex {float(a[2])}"))
+    elif cmd == "press":                            # along press <side> x y z [depth_cm]: push straight down on (x,y,z)
+        x, y, z = map(float, a[2:5]); depth = float(a[5]) / 100 if len(a) > 5 else 0.04
+        print(rstep(f"set {side}_gripper 0; goto {side} {x} {y} {z + 0.04:.3f}"))
+        print(rstep(f"goto {side} {x} {y} {z - depth:.3f}"))      # aims below the surface: the servos push
+        time.sleep(0.8)
+        print(rstep(f"goto {side} {x} {y} {z + 0.05:.3f}"))
+    elif cmd == "park":                             # along park: arms that hold nothing go to rest
+        h = rd_held()
+        print(rstep("; ".join(f"recall rest {sd}" for sd in ("left", "right") if sd not in h) or ""))
+
+
 def main():
     a = sys.argv[1:] or ["help"]
     if a[0] == "run":
@@ -457,6 +522,8 @@ def main():
         else:
             h[side] = what
         json.dump(h, open(HELD, "w")); event("held", json.dumps(h)); print(h)
+    elif a[0] in ("hold", "release", "turn", "tilt", "press", "park"):
+        skill(a)
     elif a[0] == "look":
         print(look(" ".join(a[1:])))
     elif a[0] == "say":
