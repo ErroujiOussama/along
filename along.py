@@ -120,6 +120,7 @@ class LiveVoice:
     def __init__(self, on_text):
         self.on, self.on_text, self.phase, self.prob, self.stt_busy = threading.Event(), on_text, "off", 0.0, False
         self.ws, self.deleg, self.heard, self.speak_until = None, None, "", 0.0
+        self.utt, self.utt_t = "", 0.0                    # current utterance, for the page log
         threading.Thread(target=self.loop, daemon=True).start()
 
     def loop(self):
@@ -191,8 +192,6 @@ class LiveVoice:
                     threading.Thread(target=pump_mic, daemon=True).start()
                     threading.Thread(target=pump_out, daemon=True).start()
                 elif k == "session.output_audio.delta":
-                    if self.heard.strip() and self.phase == "speech":     # a turn without a delegation (chat)
-                        event("heard", self.heard.strip() + "  (chat)"); self.heard = ""
                     b = base64.b64decode(e["delta"]); spk.stdin.write(b); spk.stdin.flush()
                     import numpy as np                    # the stream never stops (silence too): mute only on real speech
                     if len(b) >= 2 and float(np.sqrt(np.mean(np.frombuffer(b, np.int16).astype(np.float32) ** 2))) > 300:
@@ -200,12 +199,16 @@ class LiveVoice:
                 elif k == "session.output_transcript.delta":
                     said += e["delta"]
                 elif k == "session.input_transcript.delta":
-                    self.heard += e["delta"]; self.phase = "speech"
-                elif k == "session.delegation.created":
-                    self.deleg, req, self.heard, self.phase = e["delegation"]["id"], self.heard.strip(), "", "listening"
-                    self.on_text(req or "(the person asked for something; look and act)")
+                    self.heard += e["delta"]; self.utt += e["delta"]; self.utt_t = time.time(); self.phase = "speech"
+                elif k == "session.delegation.created":         # carries no text: hand over everything heard since the last one
+                    if self.utt.strip():
+                        event("heard", self.utt.strip()); self.utt = ""
+                    self.deleg, req, self.heard, self.phase = e["delegation"]["id"], " ".join(self.heard.split())[-400:], "", "listening"
+                    self.on_text(req or "(inaudible)")
                 elif k == "error":
                     log("live:", e); event("error", f"live: {e.get('error', e)}")
+                if self.utt.strip() and time.time() - self.utt_t > 1.0:     # utterance over: log it once
+                    event("heard", self.utt.strip()); self.utt = ""
                 if time.time() > self.speak_until + 0.3:
                     if self.phase == "muted":
                         self.phase = "listening"
@@ -359,6 +362,31 @@ def engaged(bot):
 ON = f"{HERE}/.along_on"                                    # manual switch: exists = Along is on (mic open)
 
 
+BUSY = threading.Event()                                  # a Codex turn is running
+STATE = {"text": "", "t": 0.0}                            # latest look-only robot step while switched on
+
+
+def brief_state(txt):
+    """'left grip 3 tip 0.22/+0.00/0.10, right ...' from robot step output."""
+    import re
+    out = []
+    for ln in txt.splitlines():
+        m = re.match(r"(left|right)\s.*grip ([\d.-]+).*?(HOLDING)?.*tip x([\d.-]+) y([+\d.-]+) z([\d.-]+)", ln)
+        if m:
+            out.append(f"{m[1]} grip {float(m[2]):.0f}{' HOLDING' if m[3] else ''} tip {m[4]}/{m[5]}/{m[6]}")
+    return ", ".join(out)
+
+
+def watch(mic):
+    """While switched on and Codex is idle: refresh snap_all.jpg + arm state every 2 s, so a request starts with a fresh view."""
+    while True:
+        if mic.on.is_set() and not BUSY.is_set():
+            txt = rstep()
+            if txt:
+                STATE.update(text=brief_state(txt), t=time.time())
+        time.sleep(2.0)
+
+
 def relay_replies():
     """Codex's final message of each turn is what Along says (GPT-Live voices it): no `along say` tool call needed."""
     import glob
@@ -378,7 +406,7 @@ def relay_replies():
                     p = json.loads(ln).get("payload", {}); tid = p.get("turn_id")
                     if tid in done:
                         continue
-                    done.add(tid); msg = (p.get("last_agent_message") or "").strip()
+                    done.add(tid); msg = (p.get("last_agent_message") or "").strip(); BUSY.clear()
                     if not first and msg and msg.lower().strip(".") != "ready":
                         say(msg[:400])
         first = False; time.sleep(0.3)
@@ -391,12 +419,14 @@ def run_manual():
     def heard(text):
         nonlocal last_voice
         last_voice = time.time()
-        event("heard", text)
-        tell(f"[voice] {text}")
+        age = time.time() - STATE["t"]
+        ctx = f"   || now: {STATE['text']}; held {json.dumps(rd_held())}; snap_all.jpg {age:.0f} s old" if age < 6 else ""
+        BUSY.set(); tell(f"[voice] {text}{ctx}")
     if not env("OPENAI_API_KEY"):
         sys.exit("OPENAI_API_KEY missing (.env): GPT-Live is the voice")
     mic = LiveVoice(heard)
     threading.Thread(target=relay_replies, daemon=True).start()
+    threading.Thread(target=watch, args=(mic,), daemon=True).start()
     if not env("ALONG_DRY"):
         codex_up()
     log("off (GPT-Live voice); waiting for `along on`")
@@ -423,7 +453,7 @@ def run():
 
     def heard(text):
         nonlocal last_voice
-        last_voice = time.time(); event("heard", text); tell(f"[voice] {text}")
+        last_voice = time.time(); tell(f"[voice] {text}")
     mic = LiveVoice(heard)
     if not env("ALONG_DRY"):
         codex_up()                                         # warm, so waking up is instant
@@ -535,10 +565,12 @@ def skill(a):
         nums = [float(r) for r in rest if r.replace(".", "", 1).lstrip("-").isdigit()]
         what = " ".join(r for r in rest if not r.replace(".", "", 1).lstrip("-").isdigit()) or "object"
         x, y, z = nums[:3] if len(nums) >= 3 else HOLD_AT[side]
-        say_bg("Ready, put it between my jaws.")
         for attempt in (1, 2):
+            ask = threading.Timer(4.0, say, args=("Ready, put it between my jaws.",)) if attempt == 1 else None
+            ask and ask.start()                     # only if it is not already in there (offer closes once it sits still)
             r = json.loads(subprocess.run(["robot", "offer", side, str(x), str(y), str(z), "90" if flat else "0"],
                                           capture_output=True, text=True).stdout or '{"holding": false}')
+            ask and ask.cancel()
             if r.get("holding"):
                 set_held(side, what); break
             if attempt == 1:
