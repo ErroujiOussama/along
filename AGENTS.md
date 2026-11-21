@@ -39,6 +39,12 @@ Camera exposure is on auto; change it (`robot cam <cam> ...`) only if an image i
 reopen, back off ≥ 2 cm, one corrected approach. Don't report a grasp without HOLDING (only fabric-thin things close fully).
 Lift slowly, then confirm in snap_all.jpg that it is clear of the table.
 
+**Hand-over from a person** (they hold the object out): don't chase it. One look, estimate where their hand/the object is
+(`robot locate`), then `robot offer <side> x y z [roll]` with a point ~5–8 cm in front of the object, toward the arm.
+The gripper goes there pointing at the person, jaws open, turned to match the object (roll 0 = jaws left/right, for an
+upright object; 90 = jaws up/down, for a horizontal one). The person puts the object in; offer closes when it sits still
+between the jaws and reports `holding` (it reopens and waits again after a miss). Waits up to 90 s.
+
 **Pace:** this is a workshop prototype run by trained people who watch the arms; robotd already ramps speed and clamps joint ranges.
 Think first, then act decisively; do not ask for permission or reassurance, and never ask people to rearrange things: move the robot instead.
 Big moves in free air are fine in one step (e.g. a 90° roll, 20° of lift). Lift before a sideways move near the table. Never release torque while raised.

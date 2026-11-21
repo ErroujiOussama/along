@@ -336,6 +336,58 @@ class Robot:
             cv2.putText(t, f"cam {p} dir {d}", (4, 144), cv2.FONT_HERSHEY_SIMPLEX, 0.32, col, th)
         return t
 
+    def offer_pose(self, side, x, y, z, roll=0.0):
+        """Joint targets (deg) that put the tip at (x, y, z) m pointing horizontally away from the base (toward a person in
+        front), jaws turned by `roll` deg (0 = jaws close left/right of the approach, 90 = up/down). -> (targets, err m)."""
+        import numpy as np, collide
+        from kin import K, fk, REST
+        t = np.arctan2(y, x); zax = np.array([np.cos(t), np.sin(t), 0.0]); yax = np.array([-np.sin(t), np.cos(t), 0.0])
+        T = np.eye(4); T[:3, :3] = np.column_stack([np.cross(yax, zax), yax, zax]); T[:3, 3] = (x, y, z)
+        st = self.state()["target"]; q0 = np.array([st[f"{side}_{j}"] for j in collide.J])
+        best = None
+        for seed in (q0, np.array([np.degrees(t), -40, 10, 0, 0.0]), np.array([np.degrees(t), -10, -20, 20, 0.0]), REST):
+            q = K.inverse_kinematics(np.asarray(seed, float), T, 1.0, 1.0, 200)
+            e = float(np.linalg.norm(fk(q) - T[:3, 3])) + 0.02 * float(np.linalg.norm(K.forward_kinematics(q)[:3, 2] - zax))
+            if best is None or e < best[1]:
+                best = (q, e)
+        q = best[0].copy(); q[4] += roll
+        return {f"{side}_{j}": round(float(v), 2) for j, v in zip(collide.J, q)}, round(best[1], 4)
+
+    def offer(self, side, x, y, z, roll=0.0, open_pct=45, timeout=90.0):
+        """Human hand-over: move the gripper to (x, y, z) m (this arm's base frame), pointing horizontally at the person,
+        jaws open, then wait until something is placed between the jaws and stays still, close, and check HOLDING.
+        A false trigger (closed on nothing) reopens and waits again. -> {"holding": bool, "tries": n, "waited_s": t}."""
+        import numpy as np, cv2
+        targets, err = self.offer_pose(side, x, y, z, roll)
+        if err > 0.03:
+            raise RobotError(f"offer pose unreachable (off by {err * 100:.1f} cm): pick a point closer to the arm")
+        targets[f"{side}_gripper"] = open_pct
+        self.set(targets)
+        t0, tries = time.time(), 0
+
+        def roi():
+            g = cv2.cvtColor(self.thumb(side, 160, 90), cv2.COLOR_BGR2GRAY).astype(np.float32)
+            return cv2.GaussianBlur(g[40:90, 60:130], (5, 5), 0)     # the jaw gap (object close = big change; background = small)
+        while time.time() - t0 < timeout:
+            time.sleep(0.5); base = roi(); prev, still, entered = base, 0, False
+            while time.time() - t0 < timeout:
+                time.sleep(0.12); cur = roi()
+                d_base, d_prev = float(np.abs(cur - base).mean()), float(np.abs(cur - prev).mean())
+                prev = cur
+                entered = entered or d_base > 25
+                still = still + 1 if entered and d_base > 18 and d_prev < 5 else 0
+                if still >= 6:                     # something new between the jaws, held still ~0.7 s
+                    break
+            else:
+                break
+            tries += 1
+            self.set({f"{side}_gripper": 0})
+            time.sleep(0.4)
+            if self.arms()[side]["holding"]:
+                return {"holding": True, "tries": tries, "waited_s": round(time.time() - t0, 1)}
+            self.set({f"{side}_gripper": open_pct})   # closed on nothing: reopen, wait again
+        return {"holding": False, "tries": tries, "waited_s": round(time.time() - t0, 1)}
+
     def save(self, name):
         self.call(f"save {name}")
 
