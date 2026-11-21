@@ -24,6 +24,9 @@ const ctl = document.getElementById('ctl'), msg = document.getElementById('msg')
 const HINT = {auto_exposure: '1 = manual, 3 = auto', power_line_frequency: '1 = 50 Hz, 2 = 60 Hz'};
 document.getElementById('tog').onclick = () => { ctl.classList.toggle('open'); if (ctl.classList.contains('open')) load(); };
 if (location.hash === '#settings') { ctl.classList.add('open'); load(); }
+let busy = false;   // don't redraw under a slider being dragged
+ctl.addEventListener('pointerdown', () => busy = true); addEventListener('pointerup', () => setTimeout(() => busy = false, 300));
+setInterval(() => { if (ctl.classList.contains('open') && !busy) load(); }, 2000);   // shows other viewers' changes
 async function api(q) { const r = await fetch('/ctl?' + q); const j = await r.json(); if (j.error) throw new Error(j.error); return j; }
 async function load() {
   try { const all = await api(''); ctl.innerHTML = ''; for (const [cam, r] of Object.entries(all)) ctl.append(panel(cam, r)); }
