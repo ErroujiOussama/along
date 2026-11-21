@@ -14,4 +14,4 @@ mkdir -p "$CACHE"
 for s in left right; do ln -sf "$ROOT/calibration/bimanual_$s.json" "$CACHE/bimanual_$s.json"; done
 echo "installed: robot CLI, robotd.service (start: systemctl --user start robotd), calibration links"
 # repo modules (kin, collide, so101) importable from any cwd, also with PYTHONSAFEPATH=1
-echo "$PWD" > "$(.venv/bin/python -c "import site;print(site.getsitepackages()[0])")/so101_repo.pth"
+echo "$ROOT" > "$("$ROOT"/.venv/bin/python -c "import site;print(site.getsitepackages()[0])")/so101_repo.pth"
