@@ -161,7 +161,7 @@ def along_api(h, u):
             cv2.rectangle(img, tuple(b["box"][:2]), tuple(b["box"][2:]), (120, 120, 120), 1)
         new = [d["box"] for d in seen.get("new", [])]
         for d in seen.get("all", []):
-            c = (60, 220, 60) if d["box"] in new else (230, 170, 60)
+            c = (60, 220, 60) if d["box"] in new else (60, 170, 230)   # BGR: green new, orange known
             cv2.rectangle(img, tuple(d["box"][:2]), tuple(d["box"][2:]), c, 2)
             txt = f"{d['label']} {d['conf']:.2f}"
             cv2.putText(img, txt, (d["box"][0], max(14, d["box"][1] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
