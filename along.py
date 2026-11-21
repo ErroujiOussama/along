@@ -277,11 +277,24 @@ def look(question, cams=("scene", "left", "right")):
              "wrist cameras look out of each gripper between its jaws. Give pixel coordinates in the scene image when "
              "you mention where something is. Answer briefly and concretely.\n\nQuestion: " + question)
     event("look", question)
-    r = subprocess.run(["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-m", "gpt-6.1-terra", "-c", "model_reasoning_effort=low",
-                        "-o", f"{d}/answer.txt", "-i", *imgs], input=brief, capture_output=True, text=True, timeout=120)
-    ans = open(f"{d}/answer.txt").read().strip() if os.path.exists(f"{d}/answer.txt") else r.stdout.strip()[-2000:]
+    if env("OPENAI_API_KEY"):                              # lean: just the images + question
+        import base64, requests
+        content = [{"type": "input_text", "text": brief}] + [
+            {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(open(p, "rb").read()).decode()} for p in imgs]
+        r = requests.post("https://api.openai.com/v1/responses", headers={"Authorization": f"Bearer {env('OPENAI_API_KEY')}"},
+                          json={"model": env("ALONG_LOOK_MODEL", "gpt-6.1-terra"), "reasoning": {"effort": "low"},
+                                "input": [{"role": "user", "content": content}]}, timeout=60)
+        r.raise_for_status()
+        ans = "".join(c.get("text", "") for o in r.json().get("output", []) if o.get("type") == "message"
+                      for c in o.get("content", [])).strip()
+    else:                                                  # no key: Codex login; empty cwd so AGENTS.md isn't sent along
+        r = subprocess.run(["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-m", env("ALONG_LOOK_MODEL", "gpt-6.1-terra"),
+                            "-c", "model_reasoning_effort=low", "-o", f"{d}/answer.txt", "-i", *imgs],
+                           input=brief, capture_output=True, text=True, timeout=120, cwd=d)
+        ans = open(f"{d}/answer.txt").read().strip() if os.path.exists(f"{d}/answer.txt") else r.stdout.strip()[-2000:]
     event("seen", ans)
     return ans
+
 
 
 def main():

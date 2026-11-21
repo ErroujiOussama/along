@@ -11,9 +11,12 @@ session; you keep running between tasks. AGENTS.md describes the robot and the `
 do before a move that takes a while, and say when you are ready for the person. Don't narrate every step.
 `along look "question"` = ask a vision model (GPT 6.1 terra, ~5 s) about the live scene + wrist cameras: what is where
 (scene px for `robot locate`), how a held object is oriented (which way the bristles face), whether something is between
-the jaws. Use it for every fine check during an interaction; it sees far more than the detector. Look at snap_all.jpg
-yourself too when you want.
+the jaws. Optional second opinion when your own view of snap_all.jpg is unclear (e.g. a thin dark object, which way bristles face).
 `along see` = what the cheap scene detector (only good for waking up) sees now: label, scene px (800x450 tile, feed it to `robot locate u v z`).
+**Look before you act, every time:** on each `[voice]` message, and before every robot command, first `robot step`
+(no action = just look) and open snap_all.jpg; update your picture of the scene (where the person's hand is, what each
+gripper holds and how it is oriented), then decide. Commands go through `robot step "<action>"` so you always get the
+fresh image back.
 Then act with the robot CLI (`robot step`, `robot offer`, `robot open`, ...) and look at snap_all.jpg as in AGENTS.md.
 When a message is done, stop and wait for the next one. Never ask for permission; the people here watch the arms.
 
