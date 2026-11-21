@@ -25,6 +25,8 @@ elbow_flex, wrist_flex, wrist_roll, gripper; degrees, gripper 0-100):
   save <name> / recall <name> [side] / poses     named poses in ./poses.json
   snap [cam] [path]             write newest camera frames (default all connected: ./snap_<cam>.jpg); cam = left|right|scene
   cams                          per camera: ok (fresh frame), age_s, device
+  camctl <cam> [k=v ...] [reset]   list / set+save V4L2 controls (auto_exposure 1=manual 3=auto,
+                                exposure_time_absolute, gain, brightness, power_line_frequency 1=50 Hz, focus...)
   thumb <side> <w> <h>          newest frame of that camera resized to w x h, raw BGR bytes base64 (terminal views)
   speed <deg_per_s>             change VEL
   home                          go to the pose captured at start
@@ -46,6 +48,7 @@ CAMS = {"left": "/dev/v4l/by-id/usb-icSpring_icspring_camera_20240307110322-vide
         "right": "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0",  # right wrist
         "scene": "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_DB9E36FF-video-index0"}                  # Logitech C920
 STALE = 2.0      # s without a new frame = camera counts as gone (unplugged)
+CAMCFG = f"{HERE}/cams.json"   # {cam: {v4l2 control: value}}, applied whenever a camera (re)opens; `camctl` edits it
 PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_{}-if00"
 SERIAL = {"left": "5B8E113306", "right": "5B61036524"}
 CALIB_DIR = f"{HERE}/calibration"                 # tools/calibrate.sh writes here; the only copy
@@ -290,6 +293,7 @@ def camera_loop(side):
                     log(f"WARN {side} camera: not connected ({dev})"); up = False
                 time.sleep(1); continue
             cam = open_cam(dev)
+            apply_camcfg(side)
         ok, f = cam.read()
         if ok:
             frames[side] = (time.time(), f)
@@ -301,6 +305,47 @@ def camera_loop(side):
             cam.release(); cam = None; time.sleep(0.5)
     if cam is not None:
         cam.release()
+
+
+def load_camcfg():
+    try:
+        return json.load(open(CAMCFG))
+    except (OSError, ValueError):
+        return {}
+
+
+def apply_camcfg(side):
+    cfg = load_camcfg().get(side)
+    if cfg and not SIM:
+        try:
+            import v4l; v4l.set_controls(CAMS[side], cfg)
+        except Exception as e:
+            log(f"WARN {side} camera settings {cfg}: {e}")
+
+
+def camctl(parts):
+    """camctl <cam> [key=value ...] [reset]: set + save controls; returns all controls of that camera."""
+    if len(parts) < 2 or parts[1] not in CAMS:
+        raise ValueError(f"usage: camctl <{'|'.join(CAMS)}> [control=value ...] [reset]")
+    name, cfg = parts[1], load_camcfg()
+    if SIM:
+        return {"cam": name, "controls": {}, "saved": cfg.get(name, {})}
+    import v4l
+    if "reset" in parts[2:]:      # driver defaults for everything, forget saved settings
+        for k, c in sorted(v4l.controls(CAMS[name]).items(), key=lambda kc: "auto" not in kc[0]):
+            try:
+                v4l.set_controls(CAMS[name], {k: c["default"]})
+            except OSError:
+                pass              # read-only / not settable in the current mode
+        cfg.pop(name, None)
+    new = dict(kv.split("=", 1) for kv in parts[2:] if "=" in kv)
+    if new:
+        v4l.set_controls(CAMS[name], {k: int(v) for k, v in new.items()})
+        cfg[name] = {**cfg.get(name, {}), **{k: int(v) for k, v in new.items()}}
+    if new or "reset" in parts[2:]:
+        json.dump(cfg, open(CAMCFG, "w"), indent=1)
+    ctl = {k: {x: c[x] for x in ("value", "min", "max", "default", "inactive")} for k, c in v4l.controls(CAMS[name]).items()}
+    return {"cam": name, "controls": ctl, "saved": cfg.get(name, {})}
 
 
 def get_frame(side):
@@ -434,6 +479,8 @@ def handle(parts):
         return {"paths": out, "age_s": age, "missing": [n for n in CAMS if n not in out]}
     if cmd == "cams":
         return {"cams": cams()}
+    if cmd == "camctl":
+        return camctl(parts)
     if cmd == "thumb":
         import base64, cv2
         t, img = get_frame(parts[1])

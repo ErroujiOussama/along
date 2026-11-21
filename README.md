@@ -18,13 +18,18 @@ robot save rest                  # once, with the arms folded at rest: home/stop
 
 ```bash
 robot                            # state: target vs measured per joint, torque, loop Hz
+robot step "move right_elbow_flex -5; set right_gripper 20"   # run, wait until settled, snap_all.jpg + ~4 state lines
+robot step                       # just look: all cameras side by side (left | right | scene, 400x225) + joints, HOLDING, tip xyz
 robot move left elbow -5         # relative (deg; gripper %); `set` = absolute
 robot open right · robot close right · robot goto left 0.2 0 0.08 · robot tip left
 robot torque off left            # limp for hand-guiding — HOLD THE ARM; `torque on left` holds the new pose
 robot save NAME · robot recall NAME [side] · robot stop · robot home
-robot snap [left|right|scene]    # newest frames → snap_<cam>.jpg (default all connected) · robot cams = which deliver
+robot snap [left|right|scene]    # full-res newest frames → snap_<cam>.jpg (only when detail is needed)
+robot cams                       # which cameras deliver (unplugged = grey tile in step/view/stream)
+robot cam scene [k=v ...|reset]  # V4L2 controls (exposure, gain, focus, …), saved in cams.json, re-applied on replug
 robot view [cam ...]             # live video window, all cameras side by side (through robotd)
-robot stream [port]              # same as a web page (MJPEG, :8101); share: `tailcat serve 8101`, viewers `tailcat browse <addr>`
+robot stream [port]              # same as a web page (MJPEG, :8101)
+                                 # share: `tailcat serve exec -- socat - TCP:127.0.0.1:8101`, viewers `tailcat browse <addr>`
 robot raw "move right_elbow_flex -5; wait; snap"   # raw protocol; ';' chains, wait = until settled
 .venv/bin/python tui.py          # keyboard panel + live camera (v); shared as quack session so101-tui
 systemctl --user stop robotd     # park at rest, release torque
@@ -34,6 +39,7 @@ systemctl --user stop robotd     # park at rest, release torque
 from so101 import Robot
 bot = Robot()
 bot.left.move(elbow=-5); bot.right.goto(0.2, 0, 0.08); bot.left.torque(False); img = bot.frame()
+bot.step("move right_elbow_flex -5"); bot.snap_all(); bot.right.holding(); bot.cams()
 ```
 
 `robot help` lists everything. Joints: pan lift elbow wrist roll gripper. Sides: left (white), right (orange).
@@ -46,10 +52,11 @@ bot.left.move(elbow=-5); bot.right.goto(0.2, 0, 0.08); bot.left.torque(False); i
 | `so101.py` · `robot.py` · `tui.py` | Python API · CLI · panel |
 | `kin.py`, `so101.urdf` | FK/IK (URDF from TheRobotStudio/SO-ARM100, meshes stripped) |
 | `calibration/` | servo calibration, the only copy (`tools/calibrate.sh` rewrites it) |
-| `poses.json` | saved poses (`rest`, …) |
+| `poses.json` · `cams.json` | saved poses (`rest`, …) · camera settings (scene: 50 Hz anti-flicker) |
+| `v4l.py` | V4L2 controls without v4l2-ctl |
 | `test_sim.py` | 24 end-to-end checks against the sim |
 | `tools/` | `scan.py` (which servo IDs answer), `calibrate.sh` — stop robotd first |
-| `AGENTS.md` | rules for coding agents driving the arms |
+| `AGENTS.md` · `prompts/` | rules for coding agents driving the arms · reusable task prompts (`pick.md`) |
 
 ## How robotd works
 

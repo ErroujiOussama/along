@@ -12,9 +12,14 @@
   robot torque off left | torque on [all]   limp for hand-guiding (HOLD THE ARM) / hold the new pose
   robot snap [left|right|scene] [path]   camera frames (default all connected: snap_<cam>.jpg)
   robot cams                             which cameras deliver frames (replug-safe: they come back by themselves)
+  robot cam scene [k=v ...] [reset]      list / set camera controls, saved + re-applied on replug
+                                         (auto_exposure=1 exposure_time_absolute=120 · auto_exposure=3 = auto)
   robot view [cam ...]                   live video window, cameras side by side (default all)
   robot stream [port [cam ...]]          the same as a web page (MJPEG, default port 8101; share with tailcat)
   robot stop | home | limits | speed 30
+  robot step ["move right_elbow_flex -5; grip right 3"]   agent loop: raw cmds, wait until settled, then
+                                         4-line summary (joints, HOLDING = gripper closed on something, tip xyz m)
+                                         + ONE small image snap_all.jpg (left | right | scene, 400x225 each)
   robot raw "move left_elbow_flex -5; wait; snap"   raw robotd protocol, ';' chains, wait = until settled
   robot shutdown [here]                  release torque after going home (or right here)
 
@@ -23,10 +28,11 @@ Flags: --json machine-readable output, --no-wait return before the motion finish
 """
 import json, os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from so101 import Robot, RobotError, JOINTS
+from so101 import Robot, RobotError, JOINTS, tile
 
 SIDE = {"l": "left", "left": "left", "r": "right", "right": "right"}
 CAM = {**SIDE, "s": "scene", "scene": "scene"}
+SHORT = ["pan", "lift", "elbow", "wrist", "roll"]
 
 
 def table(st):
@@ -54,40 +60,29 @@ def side(a, i=1):
 
 
 class Mosaic:
-    """All cameras side by side (through robotd), 400x225 each. Survives camera replugs (grey tile)
-    and robotd restarts (reconnects)."""
-    W, H = 400, 225
-
+    """Robot.mosaic for view/stream: survives camera replugs (grey tile) and robotd restarts (reconnects)."""
     def __init__(self, names=None):
         self.bot, self.names = None, names
 
     def frame(self):
-        import cv2, numpy as np
         try:
             self.bot = self.bot or Robot()
-            names = self.names or list(self.bot.cams())
-        except Exception as e:
+            return self.bot.mosaic(self.names)
+        except Exception as e:              # socket gone: robotd restarting
             self.bot = None
-            return self.tile(f"robotd: {e}"[:40], len(self.names or ["left", "right", "scene"]))
-        tiles = []
-        for n in names:
-            try:
-                tiles.append(self.bot.thumb(n, self.W, self.H).copy())
-            except RobotError as e:
-                tiles.append(self.tile(str(e)[:40]))
-            except Exception as e:          # socket gone: robotd restarting
-                self.bot = None
-                tiles.append(self.tile(f"robotd: {e}"[:40]))
-        for n, t in zip(names, tiles):
-            cv2.putText(t, n, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4)
-            cv2.putText(t, n, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        return np.hstack(tiles)
+            return tile(f"robotd: {e}", n=len(self.names or ["left", "right", "scene"]))
 
-    def tile(self, msg, n=1):
-        import cv2, numpy as np
-        t = np.full((self.H, self.W * n, 3), 60, np.uint8)
-        cv2.putText(t, msg, (10, self.H // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
-        return t
+
+def step_text(r):
+    out = [f"{'ok' if not isinstance(rep, str) else 'ERR':4s} {c}" + (f"   {rep[7:]}" if isinstance(rep, str) else
+           f"   off target: {rep['off_target']}" if c == "wait" and rep.get("off_target") else "") for c, rep in r["ran"]]
+    for s, a in r["state"].items():
+        js = " ".join(f"{n} {a['measured'][j] + 0:.1f}{'!' if j in a['off'] else ''}" for n, j in zip(SHORT, JOINTS[:5]))
+        g = f"grip {a['measured']['gripper'] + 0:.1f}{'!' if 'gripper' in a['off'] else ''} (target {a['target']['gripper']:.1f})"
+        out.append(f"{s:6s} {js} {g}{' HOLDING' if a['holding'] else ''}   torque {'on' if a['torque'] else 'OFF'}"
+                   f"   tip {' '.join(f'{v:.2f}' for v in a['tip'])}")
+    cams = " | ".join(n + (" MISSING" if n in r["missing_cams"] else "") for n in ("left", "right", "scene"))
+    return "\n".join(out + [f"image  {r['image']}  ({cams})"])
 
 
 def stream(names, port):
@@ -176,6 +171,13 @@ def main(argv):
         for n, c in bot.cams().items():
             print(f"{n:6s} {'ok' if c['ok'] else 'MISSING':8s} age {c['age_s']} s  {c['dev']}")
         return
+    if cmd == "cam":
+        r = bot.call(" ".join(["camctl", CAM.get(a[1], a[1]) if len(a) > 1 else "?"] + a[2:]))
+        for k, c in r["controls"].items():
+            print(f"{k:32s} {c['value']:>6} [{c['min']}..{c['max']}] default {c['default']}{'  (auto)' if c['inactive'] else ''}")
+        print("saved:", r["saved"] or "-"); return
+    if cmd == "step":
+        r = bot.step(" ".join(a[1:])); print(json.dumps(r) if as_json else step_text(r)); return
     if cmd == "raw":
         for c in " ".join(a[1:]).split(";"):
             c = c.strip()

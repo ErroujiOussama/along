@@ -10,6 +10,9 @@
     bot.left.pose()                   # {'shoulder_pan': 1.2, ...} measured
     bot.left.tip()                    # forward kinematics of the measured pose (m)
     bot.snap()                        # both wrist cameras -> {'left': 'snap_left.jpg', 'right': ...}
+    bot.step("move right_elbow_flex -5")  # raw cmds, wait, one small mosaic -> {'ran', 'state', 'image', 'missing_cams'}
+    bot.snap_all()                    # all cameras side by side, 400x225 each -> snap_all.jpg; bot.mosaic() -> numpy BGR
+    bot.right.holding()               # gripper closed on something (stopped >= 5 short of a target <= 10)
     bot.left.frame()                  # newest left wrist-camera frame as numpy BGR; bot.left.snap() -> path
     bot.left.thumb(80, 45)            # small live frame (what the panel's camera view uses)
     bot.save("ready"); bot.recall("ready", side="left")
@@ -19,7 +22,7 @@
 Every motion method waits for the motion to finish unless wait=False. Joint aliases:
 pan, lift, elbow, wrist, roll, gripper (full names like elbow_flex also work).
 """
-import json, os, socket, time
+import errno, json, os, socket, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SOCK = os.environ.get("SO101_SOCK") or os.path.join(HERE, "sim.sock" if os.environ.get("SO101_SIM") == "1" else "robot.sock")
@@ -30,6 +33,19 @@ ALIAS = {"pan": "shoulder_pan", "lift": "shoulder_lift", "shoulder": "shoulder_l
 
 class RobotError(RuntimeError):
     pass
+
+
+def holding(target, measured):
+    """Gripper jaws stopped on something: commanded (nearly) closed but measured >= 5 more open."""
+    return target <= 10 and measured - target >= 5
+
+
+def tile(msg, w=400, h=225, n=1):
+    """Grey w*n x h placeholder with a message (camera unplugged, robotd gone)."""
+    import cv2, numpy as np
+    t = np.full((h, w * n, 3), 60, np.uint8)
+    cv2.putText(t, msg[:w // 10], (10, h // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
+    return t
 
 
 def joint_name(name):
@@ -46,7 +62,11 @@ class Robot:
         try:
             self._s.connect(sock)
         except OSError as e:
-            raise RobotError("robotd is not running: systemctl --user start robotd") from e
+            self._s.close()
+            if not os.path.exists(sock) or e.errno in (errno.ECONNREFUSED, errno.ENOENT):
+                raise RobotError("robotd is not running: systemctl --user start robotd") from e
+            raise RobotError(f"robotd socket {sock} exists but cannot be opened ({e.strerror or e}; sandboxed? "
+                             "run robot with escalated permissions / full access)") from e
         self._f = self._s.makefile("rw")
         self.left, self.right = Arm(self, "left"), Arm(self, "right")
 
@@ -120,6 +140,11 @@ class Robot:
         """{name: {"ok": fresh frame, "age_s", "dev"}} for every camera robotd knows (left, right, scene)."""
         return self.call("cams")["cams"]
 
+    def camctl(self, cam, reset=False, **controls):
+        """List / set + save a camera's V4L2 controls, e.g. camctl("scene", auto_exposure=1, exposure_time_absolute=120).
+        Saved in cams.json and re-applied whenever robotd (re)opens the camera."""
+        return self.call(" ".join(["camctl", cam] + (["reset"] if reset else []) + [f"{k}={int(v)}" for k, v in controls.items()]))
+
     def frame(self, side):
         import cv2
         return cv2.imread(self.snap(side))
@@ -129,6 +154,61 @@ class Robot:
         import base64, numpy as np
         r = self.call(f"thumb {side} {w} {h}")
         return np.frombuffer(base64.b64decode(r["bgr"]), np.uint8).reshape(r["h"], r["w"], 3)
+
+    def mosaic(self, names=None, w=400, h=225, missing=None):
+        """All cameras side by side (default every camera robotd knows), w x h each, labelled, as numpy BGR.
+        A failing camera becomes a grey tile with the error (its name is appended to `missing` if given).
+        Connection errors (robotd gone) propagate."""
+        import cv2, numpy as np
+        tiles = []
+        for n in names or list(self.cams()):
+            try:
+                t = self.thumb(n, w, h).copy()
+            except RobotError as e:
+                t = tile(str(e), w, h)
+                if missing is not None:
+                    missing.append(n)
+            cv2.putText(t, n, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4)
+            cv2.putText(t, n, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            tiles.append(t)
+        return np.hstack(tiles)
+
+    def snap_all(self, path=None, names=None, missing=None):
+        """Write the camera mosaic (left | right | scene, 400x225 each) as one JPEG; returns its path."""
+        import cv2
+        path = path or os.path.join(HERE, "snap_all.jpg")
+        cv2.imwrite(path, self.mosaic(names, missing=missing), [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return path
+
+    def arms(self, st=None):
+        """Compact per-arm summary: measured/target joints, joints > 3 deg off, torque, holding, tip xyz (m)."""
+        import sys, numpy as np
+        sys.path.insert(0, HERE)
+        from kin import fk
+        st = st or self.state()
+        out = {}
+        for s in ("left", "right"):
+            m, t = ({j: st[w][f"{s}_{j}"] for j in JOINTS} for w in ("measured", "target"))
+            out[s] = {"measured": m, "target": t, "off": [j for j in JOINTS if abs(m[j] - t[j]) > 3],
+                      "torque": st["torque"][s], "holding": holding(t["gripper"], m["gripper"]),
+                      "tip": [round(v, 3) for v in fk(np.array([m[j] for j in JOINTS[:5]]))]}
+        return out
+
+    def step(self, cmds=""):
+        """Run ';'-separated raw robotd commands (like `robot raw`), wait until settled, write snap_all.jpg.
+        Command errors are reported, not raised. -> {"ran": [[cmd, reply or "ERROR: ..."]], "state": arms(),
+        "image": path, "missing_cams": [...]}"""
+        ran, cmds = [], [c.strip() for c in cmds.split(";") if c.strip()]
+        for i, c in enumerate(cmds + ([] if cmds[-1:] == ["wait"] else ["wait"])):
+            try:
+                r = {"off_target": self.wait()} if c == "wait" else self.call(c)
+                r.pop("ok", None)
+            except RobotError as e:
+                r = f"ERROR: {e}"
+            if i < len(cmds) or r != {"off_target": {}}:   # the final implicit wait only when it has news
+                ran.append([c, r])
+        missing = []
+        return {"ran": ran, "state": self.arms(), "image": self.snap_all(missing=missing), "missing_cams": missing}
 
     def save(self, name):
         self.call(f"save {name}")
@@ -190,6 +270,11 @@ class Arm:
 
     def torque(self, on):
         self.robot.torque(on, self.side)
+
+    def holding(self):
+        """True if the gripper is closed on something (stopped >= 5 short of a target <= 10)."""
+        st = self.robot.state()
+        return holding(st["target"][f"{self.side}_gripper"], st["measured"][f"{self.side}_gripper"])
 
     def snap(self, path=None):
         return self.robot.snap(self.side, path)
