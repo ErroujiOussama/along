@@ -1,0 +1,92 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>along debug</title>
+<style>
+:root{--bg:#111;--fg:#ccc;--dim:#888;--line:#333;--acc:#e8a33d;--ok:#3fb950;--bad:#f85149;--blue:#58a6ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
+header{display:flex;gap:10px;align-items:center;padding:6px 10px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+header b{color:#fff} a{color:var(--blue)}
+.chip{padding:2px 8px;border-radius:10px;border:1px solid var(--line);font-size:12px;color:var(--dim)}
+.chip.on{color:#111;background:var(--ok);border-color:var(--ok)} .chip.warn{color:#111;background:var(--acc);border-color:var(--acc)}
+.chip.bad{color:#fff;background:var(--bad);border-color:var(--bad)}
+main{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:10px;padding:10px}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+section{border:1px solid var(--line);border-radius:6px;padding:8px;min-width:0}
+h3{margin:0 0 6px;font-size:13px;color:#fff;display:flex;justify-content:space-between;gap:8px}
+h3 span{color:var(--dim);font-weight:normal}
+img{width:100%;display:block;border-radius:4px}
+table{width:100%;border-collapse:collapse;font-size:12px} td,th{padding:2px 6px;text-align:left;border-bottom:1px solid #222}
+th{color:var(--dim);font-weight:normal} tr.new td:first-child{color:var(--ok)}
+#conv{height:340px;overflow:auto;font-size:13px;display:flex;flex-direction:column;gap:3px}
+.ev{display:grid;grid-template-columns:62px 52px 1fr;gap:6px} .ev .t{color:var(--dim);font-size:11px}
+.ev .k{font-size:11px;text-transform:uppercase} .heard .k{color:var(--blue)} .say .k{color:var(--ok)}
+.tell .k,.tell .x{color:var(--dim)} .wake .k,.idle .k{color:var(--acc)} .error .k,.error .x{color:var(--bad)}
+.say .x{color:#fff} .heard .x{color:#cfe3ff}
+pre{margin:0;height:300px;overflow:auto;font-size:11px;background:#0a0a0a;padding:6px;border-radius:4px;white-space:pre-wrap}
+form{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px} input{flex:1;min-width:140px;background:#000;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:4px 6px}
+button{background:#222;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 9px;cursor:pointer} button:hover{border-color:var(--acc)}
+.arms{display:flex;gap:14px;font-size:12px;flex-wrap:wrap}
+label{font-size:12px;color:var(--dim)}
+</style></head><body>
+<header><b>along</b><span id="chips"></span><span style="flex:1"></span><a href="/">cameras</a><a href="/inspect">inspector</a></header>
+<main>
+ <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+  <section><h3>Scene detector <span>green = new (wakes it) · orange = known · grey = idle baseline</span></h3>
+   <img id="scene" alt="scene camera with detection boxes"></section>
+  <section><h3>Detections <span id="age"></span></h3><table><thead><tr><th>label</th><th>conf</th><th>px (locate)</th><th>box</th></tr></thead><tbody id="dets"></tbody></table>
+   <div class="arms" id="arms" style="margin-top:8px"></div></section>
+ </div>
+ <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+  <section><h3>Conversation <span><label><input type="checkbox" id="showtell" style="flex:none;min-width:0"> show Codex inputs</label></span></h3>
+   <div id="conv"></div>
+   <form id="f"><input id="txt" placeholder="type as if spoken → Codex">
+    <button data-cmd="voice">send as voice</button><button data-cmd="say">speak it</button></form>
+   <form><button type="button" id="wake">force wake</button><button type="button" id="idle" title="clear the table first">store idle baseline</button></form></section>
+  <section><h3>Codex session <span>tmux attach -t along</span></h3><pre id="codex"></pre></section>
+ </div>
+</main>
+<script>
+const $ = id => document.getElementById(id), esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const hm = t => new Date(t * 1000).toTimeString().slice(0, 8);
+let lastEv = -1, stick = true;
+$('conv').addEventListener('scroll', e => { const c = e.target; stick = c.scrollTop + c.clientHeight > c.scrollHeight - 30; });
+(async function scene() { for (;;) { try {
+  const r = await fetch('/along/scene.jpg?' + Date.now(), {cache: 'no-store'});
+  if (r.ok) { const u = URL.createObjectURL(await r.blob()), o = $('scene').src; $('scene').src = u; if (o.startsWith('blob:')) URL.revokeObjectURL(o); }
+} catch (e) {} await new Promise(r => setTimeout(r, 400)); } })();
+function chip(txt, cls) { return `<span class="chip ${cls}">${txt}</span> `; }
+async function poll() {
+  try {
+    const d = await (await fetch('/along.json', {cache: 'no-store'})).json(), s = d.seen;
+    const age = s ? d.now - s.t : null;
+    $('chips').innerHTML = chip(d.daemon ? 'daemon running' : 'daemon stopped', d.daemon ? 'on' : 'bad')
+      + (s ? chip(s.active ? 'ACTIVE' : 'idle', s.active ? 'on' : '') + chip(s.listening ? 'mic on' : 'mic off', s.listening ? 'on' : '')
+           + chip(s.speaking ? 'speaking (mic muted)' : 'silent', s.speaking ? 'warn' : '')
+           + chip('new-object hits ' + (s.hits || []).filter(Boolean).length + '/4 (3 wakes)', '') : '')
+      + chip(d.codex === null ? 'no Codex session' : 'Codex up', d.codex === null ? '' : 'on');
+    $('age').textContent = s ? `${age.toFixed(1)} s old · ${d.idle.length} baseline boxes` + (s.active ? ` · last new ${(d.now - s.last_new).toFixed(0)} s, last voice ${(d.now - s.last_voice).toFixed(0)} s ago (idle after 60/60 + nothing held)` : '') : 'no detections yet (along run not started)';
+    const nb = new Set((s?.new || []).map(x => x.box.join()));
+    $('dets').innerHTML = (s?.all || []).map(x => `<tr class="${nb.has(x.box.join()) ? 'new' : ''}"><td>${esc(x.label)}</td><td>${x.conf.toFixed(2)}</td><td>${x.px.join(', ')}</td><td>${x.box.join(' ')}</td></tr>`).join('');
+    $('arms').innerHTML = d.arms.error ? esc(d.arms.error) : Object.entries(d.arms).map(([k, a]) =>
+      `<span><b>${k}</b> gripper ${a.gripper_target} ${a.holding ? '<span class="chip on">HOLDING</span>' : ''} tip ${a.tip.map(v => v.toFixed(3)).join(' ')}</span>`).join('');
+    if (d.events.length && d.events[d.events.length - 1].t !== lastEv) {
+      lastEv = d.events[d.events.length - 1].t;
+      const show = $('showtell').checked;
+      $('conv').innerHTML = d.events.filter(e => show || e.kind !== 'tell').map(e =>
+        `<div class="ev ${e.kind}"><span class="t">${hm(e.t)}</span><span class="k">${{heard: 'you', say: 'along', tell: '→codex'}[e.kind] || e.kind}</span><span class="x">${esc(e.text)}</span></div>`).join('');
+      if (stick) $('conv').scrollTop = 1e9;
+    }
+    const p = $('codex'), atEnd = p.scrollTop + p.clientHeight > p.scrollHeight - 30;
+    p.textContent = d.codex ?? '(no tmux session "along": it starts with `along run`)'; if (atEnd) p.scrollTop = 1e9;
+  } catch (e) { $('chips').innerHTML = chip('stream server unreachable', 'bad'); }
+  setTimeout(poll, 700);
+}
+poll();
+$('showtell').onchange = () => { lastEv = -1; };
+const doit = (cmd, text) => fetch('/along/do?' + new URLSearchParams({cmd, ...(text ? {text} : {})}));
+$('f').onsubmit = e => { e.preventDefault(); const t = $('txt').value.trim(), c = e.submitter?.dataset.cmd || 'voice';
+  if (!t) return; doit(c === 'voice' ? 'tell' : 'say', c === 'voice' ? '[voice] ' + t : t); $('txt').value = ''; };
+$('wake').onclick = () => doit('wake');
+$('idle').onclick = () => confirm('Store what the scene shows now as the idle baseline?') && doit('idle');
+</script></body></html>

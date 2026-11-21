@@ -13,3 +13,4 @@ scan.jpg
 .along_*
 *.pt
 !along_world.pt
+along_idle.json

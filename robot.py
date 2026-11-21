@@ -119,6 +119,64 @@ def _caps(qd):
     return out
 
 
+def along_api(h, u):
+    """Debug page for the along voice helper: /along, /along.json (state, detections, history, Codex pane),
+    /along/scene.jpg (scene camera with the detector's boxes), /along/do?cmd=tell|say|wake|idle&text=..."""
+    import subprocess
+    from urllib.parse import parse_qsl
+    here = os.path.dirname(os.path.abspath(__file__))
+    rd = lambda f, d=None: json.load(open(f"{here}/{f}")) if os.path.exists(f"{here}/{f}") else d
+    def send(body, ctype):
+        h.send_response(200); h.send_header("Content-Type", ctype); h.send_header("Cache-Control", "no-store")
+        h.send_header("Content-Length", str(len(body))); h.end_headers(); h.wfile.write(body)
+    if u.path == "/along":
+        return send(open(f"{here}/along.html", "rb").read(), "text/html")
+    if u.path == "/along.json":
+        ev = []
+        if os.path.exists(f"{here}/.along_events.jsonl"):
+            ev = [json.loads(l) for l in open(f"{here}/.along_events.jsonl").readlines()[-300:] if l.strip()]
+        pane = subprocess.run(["tmux", "capture-pane", "-p", "-t", "along", "-S", "-60"], capture_output=True, text=True)
+        daemon = subprocess.run(["pgrep", "-f", "along.py run"], capture_output=True).returncode == 0
+        arms = {}
+        try:
+            with Robot() as r:
+                st = r.state()
+                for side in ("left", "right"):
+                    a = getattr(r, side)
+                    arms[side] = {"gripper_target": st["target"][f"{side}_gripper"], "holding": a.holding(), "tip": a.tip()}
+        except Exception as e:
+            arms = {"error": str(e)}
+        return send(json.dumps({"now": time.time(), "daemon": daemon, "seen": rd(".along_seen.json"),
+                                "idle": rd("along_idle.json", []), "events": ev, "arms": arms,
+                                "codex": pane.stdout if pane.returncode == 0 else None}).encode(), "application/json")
+    if u.path == "/along/scene.jpg":
+        import cv2
+        try:
+            with Robot() as r:
+                img = r.thumb("scene", 800, 450).copy()
+        except Exception as e:
+            img = tile(str(e), 800, 450)
+        seen = rd(".along_seen.json", {}) or {}
+        for b in rd("along_idle.json", []):
+            cv2.rectangle(img, tuple(b["box"][:2]), tuple(b["box"][2:]), (120, 120, 120), 1)
+        new = [d["box"] for d in seen.get("new", [])]
+        for d in seen.get("all", []):
+            c = (60, 220, 60) if d["box"] in new else (230, 170, 60)
+            cv2.rectangle(img, tuple(d["box"][:2]), tuple(d["box"][2:]), c, 2)
+            txt = f"{d['label']} {d['conf']:.2f}"
+            cv2.putText(img, txt, (d["box"][0], max(14, d["box"][1] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
+            cv2.putText(img, txt, (d["box"][0], max(14, d["box"][1] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1)
+        return send(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes(), "image/jpeg")
+    if u.path == "/along/do":
+        q = dict(parse_qsl(u.query)); cmd = q.get("cmd", "")
+        if cmd not in ("tell", "say", "wake", "idle"):
+            return send(b'{"error": "cmd?"}', "application/json")
+        args = [f"{here}/.venv/bin/python", f"{here}/along.py", cmd] + ([q["text"]] if q.get("text") else [])
+        subprocess.Popen(args, cwd=here, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return send(json.dumps({"started": cmd}).encode(), "application/json")
+    h.send_error(404)
+
+
 def inspect_api(h, u):
     """Rollout inspector: /inspect page, /rollouts.json list, /rollout.json?id= replay, /live.json, /r/<date>/<id>.jpg."""
     from urllib.parse import parse_qsl
@@ -209,6 +267,8 @@ def stream(names, port):
                 self.send_response(200); self.send_header("Content-Type", "image/jpeg")
                 self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(jpg)))
                 self.end_headers(); self.wfile.write(jpg); return
+            if u.path.startswith("/along"):
+                return along_api(self, u)
             if u.path in ("/inspect", "/rollouts.json", "/rollout.json", "/live.json") or u.path.startswith("/r/"):
                 return inspect_api(self, u)
             if u.path != "/stream":

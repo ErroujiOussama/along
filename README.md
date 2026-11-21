@@ -48,7 +48,8 @@ along run       # idle until a new object shows up ~1.5 s, then: C920 mic -> Ele
                 # persona prompts/along.md) -> robot + `along say` (ElevenLabs TTS); back to idle after a quiet minute
 along see · along say "hi" · along tell "[voice] hold this"   # detections · speak · type into the Codex session
 ```
-Key: `ELEVENLABS_API_KEY` in `.env`. Watch the agent: `tmux attach -t along`.
+Key: `ELEVENLABS_API_KEY` in `.env`. Watch the agent: `tmux attach -t along`; debug page `robot stream` → `/along`
+(detector boxes, state, conversation, Codex pane, type-as-voice, force wake).
 
 ```python
 from so101 import Robot
