@@ -22,7 +22,7 @@ th{color:var(--dim);font-weight:normal} tr.new td:first-child{color:var(--ok)}
 .ev{display:grid;grid-template-columns:62px 52px 1fr;gap:6px} .ev .t{color:var(--dim);font-size:11px}
 .ev .k{font-size:11px;text-transform:uppercase} .heard .k{color:var(--blue)} .say .k{color:var(--ok)}
 .tell .k,.tell .x{color:var(--dim)} .wake .k,.idle .k{color:var(--acc)} .error .k,.error .x{color:var(--bad)}
-.say .x{color:#fff} .look .k,.seen .k{color:#d2a8ff} .seen .x{color:#e5d4ff} .heard .x{color:#cfe3ff}
+.ignored .k,.ignored .x{color:#555} .say .x{color:#fff} .look .k,.seen .k{color:#d2a8ff} .seen .x{color:#e5d4ff} .heard .x{color:#cfe3ff}
 pre{margin:0;height:300px;overflow:auto;font-size:11px;background:#0a0a0a;padding:6px;border-radius:4px;white-space:pre-wrap}
 form{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px} input{flex:1;min-width:140px;background:#000;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:4px 6px}
 button{background:#222;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 9px;cursor:pointer} button:hover{border-color:var(--acc)}
@@ -74,7 +74,7 @@ async function poll() {
       lastEv = d.events[d.events.length - 1].t;
       const show = $('showtell').checked;
       $('conv').innerHTML = d.events.filter(e => show || e.kind !== 'tell').map(e =>
-        `<div class="ev ${e.kind}"><span class="t">${hm(e.t)}</span><span class="k">${{heard: 'you', say: 'along', tell: '→codex', held: 'state', look: 'look?', seen: 'terra'}[e.kind] || e.kind}</span><span class="x">${esc(e.text)}</span></div>`).join('');
+        `<div class="ev ${e.kind}"><span class="t">${hm(e.t)}</span><span class="k">${{heard: 'you', say: 'along', tell: '→codex', held: 'state', ignored: 'chatter', look: 'look?', seen: 'terra'}[e.kind] || e.kind}</span><span class="x">${esc(e.text)}</span></div>`).join('');
       if (stick) $('conv').scrollTop = 1e9;
     }
     const p = $('codex'), atEnd = p.scrollTop + p.clientHeight > p.scrollHeight - 30;

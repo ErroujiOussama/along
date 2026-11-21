@@ -70,6 +70,7 @@ def say(text):
             subprocess.run(["espeak-ng", "-s", "165", text])
     finally:
         open(MUTE, "w").write(str(time.time() + 0.4))   # room echo
+        open(f"{HERE}/.along_spoke", "w").write(str(time.time()))
 
 
 def chime(freq=660, dur=0.12):
@@ -98,6 +99,17 @@ def muted():
         return False
 
 
+def addressed(text, window=20.0):
+    """Busy room: only speech that names Along, or comes within `window` s after Along last spoke (a reply), counts."""
+    import re
+    if re.search(r"\b(along|a long|alone|alon)\b", text, re.I):
+        return True
+    try:
+        return time.time() - float(open(f"{HERE}/.along_spoke").read()) < window
+    except (FileNotFoundError, ValueError):
+        return False
+
+
 class Mic:
     """Silero VAD on 16 kHz mono from PipeWire. Calls on_text(text) per utterance while self.on is set."""
     def __init__(self, on_text):
@@ -106,7 +118,7 @@ class Mic:
 
     def loop(self):
         import numpy as np
-        cmd = ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16"]
+        cmd = ["pw-record", "--raw", "--rate", "16000", "--channels", "1", "--format", "s16"]   # raw: a pipe gets AU (big-endian) otherwise
         mic = env("ALONG_MIC") or next((l.split()[1] for l in subprocess.run(["pactl", "list", "short", "sources"],
               capture_output=True, text=True).stdout.splitlines() if "C920" in l and "input" in l), None)
         if mic:
@@ -144,10 +156,13 @@ class Mic:
         except Exception as e:
             log("stt error", e); event("error", f"stt: {e}"); return
         log("heard:", repr(t))
-        if t:
+        if t and addressed(t):
             event("heard", t)
-        if len(t.strip(" .,!?")) > 1 and not (t.startswith("(") and t.endswith(")")):   # "(music)" etc.
-            self.on_text(t)
+        if len(t.strip(" .,!?")) <= 1 or (t.startswith("(") and t.endswith(")")):      # "(music)" etc.
+            return
+        if not addressed(t):
+            event("ignored", t); return
+        self.on_text(t)
 
 
 # ---------------------------------------------------------------- codex bridge

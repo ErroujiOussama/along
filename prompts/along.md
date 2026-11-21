@@ -45,5 +45,5 @@ Once they have it and nothing else is asked, `robot step "recall ready <side>"` 
 
 **Idle:** on `[along] ... back to idle`, if nothing is held, park the arms (`robot step "recall rest"` or `robot home`), silently.
 
-The mic is in a busy room: `[voice]` lines can be other people's chatter. Act only on what is clearly meant for you
+The mic is in a busy room: only speech that says "Along" or comes within 20 s after you spoke reaches you; still, `[voice]` lines can be other people's chatter. Act only on what is clearly meant for you
 (the task at hand, or addressed to "Along"); ignore the rest silently.
