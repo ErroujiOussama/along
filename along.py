@@ -31,9 +31,12 @@ EVENTS = f"{HERE}/.along_events.jsonl"                    # conversation + state
 TMUX, W, H = "along", 800, 450
 ROI, CHANGE = (150, 60, 650, 430), 0.02                    # centre of the table (scene px) where new things wake Along
 BG = f"{HERE}/along_idle_bg.npy"
-CODEX = ["codex", "--dangerously-bypass-approvals-and-sandbox", "--disable", "hooks", "-C", HERE,
+CODEX = ["codex", "--dangerously-bypass-approvals-and-sandbox", "-C", HERE,
          "-m", os.environ.get("ALONG_MODEL", "gpt-6.1-terra"), "-c", "model_reasoning_effort=low",
-         "-c", "model_auto_compact_token_limit=100000"]
+         "-c", "model_auto_compact_token_limit=100000",
+         "-c", "project_doc_max_bytes=0", "-c", 'web_search="disabled"',   # no AGENTS.md (the brief has what it needs), no web
+         *[x for f in ("hooks", "plugins", "apps", "multi_agent", "image_generation", "browser_use", "computer_use", "goals",
+                       "skill_search", "in_app_browser", "tool_suggest") for x in ("--disable", f)]]
 
 
 def env(k, d=None):
@@ -331,7 +334,7 @@ def codex_up():
         return
     log("starting Codex in tmux session", TMUX)
     tmux("new-session", "-d", "-s", TMUX, "-x", "200", "-y", "50", "-c", HERE,
-         *CODEX, "Read prompts/along.md and AGENTS.md, then reply \"ready\" and end your turn (messages arrive as new turns). Don't speak yet.")
+         *CODEX, open(f"{HERE}/prompts/along.md").read() + "\n\nReply \"ready\" now and end your turn; requests arrive as new turns.")
     t0, last = time.time(), ""
     while time.time() - t0 < 120:                          # idle = screen unchanged for 6 s after the first turn
         time.sleep(3)
