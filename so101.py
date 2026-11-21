@@ -196,11 +196,12 @@ class Robot:
                       "tip": [round(v, 3) for v in fk(np.array([m[j] for j in JOINTS[:5]]))]}
         return out
 
-    def step(self, cmds=""):
+    def step(self, cmds="", image=None):
         """Run ';'-separated raw robotd commands (like `robot raw`, plus `nudge <side> dx dy dz` in cm),
         wait until settled, write snap_all.jpg. Command errors are reported, not raised.
-        -> {"ran": [[cmd, reply or "ERROR: ..."]], "state": arms() (+ "tip_delta" since the last step), "image", "missing_cams"}"""
-        ran, cmds = [], [c.strip() for c in cmds.split(";") if c.strip()]
+        -> {"ran": [[cmd, reply or "ERROR: ..."]], "state": arms() (+ "tip_delta" since the last step),
+            "blocked": BLOCKED events during this step, "near": close link pairs, "image", "missing_cams"}"""
+        ran, cmds, t0 = [], [c.strip() for c in cmds.split(";") if c.strip()], time.time()
         for i, c in enumerate(cmds + ([] if cmds[-1:] == ["wait"] else ["wait"])):
             try:
                 if c == "wait":     # a gripper closed on something never reaches its target: not news
@@ -214,7 +215,8 @@ class Robot:
                 r = f"ERROR: {e}"
             if i < len(cmds) or r != {"off_target": {}}:   # the final implicit wait only when it has news
                 ran.append([c, r])
-        missing, arms = [], self.arms()
+        st = self.state()
+        missing, arms = [], self.arms(st)
         last = os.path.join(HERE, ".last_tips_sim.json" if os.environ.get("SO101_SIM") == "1" else ".last_tips.json")
         try:
             prev = json.load(open(last))
@@ -223,7 +225,38 @@ class Robot:
         except (OSError, ValueError, KeyError):
             pass
         json.dump({sd: a["tip"] for sd, a in arms.items()}, open(last, "w"))
-        return {"ran": ran, "state": arms, "image": self.snap_all(missing=missing), "missing_cams": missing}
+        return {"ran": ran, "state": arms, "blocked": [e for e in st.get("blocked", []) if e["t"] >= t0 - 0.5],
+                "near": st.get("near", []), "image": self.snap_all(image, missing=missing), "missing_cams": missing}
+
+    def plan(self, cmds, dry=False):
+        """Check a whole ';'-separated plan (step commands) on the SIM robotd started from the real pose, then run it for
+        real if every command passed. -> {"sim": step result on the sim, "ok": bool, "real": step result or None}.
+        The sim has the same collision model (collide.py + scene.json) and ramps; it is started if not running."""
+        import subprocess
+        sim_sock = os.path.join(HERE, "sim.sock")
+        try:
+            sim = Robot(sim_sock)
+        except RobotError:
+            subprocess.Popen([os.path.join(HERE, ".venv/bin/python"), os.path.join(HERE, "robotd.py")], cwd=HERE,
+                             env={**os.environ, "SO101_SIM": "1"}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            for _ in range(50):
+                time.sleep(0.2)
+                try:
+                    sim = Robot(sim_sock); break
+                except RobotError:
+                    pass
+            else:
+                raise RobotError("could not start the sim robotd")
+        with sim:
+            real = self.state()
+            sim.call("collide off"); sim.call("speed 120")
+            sim.call("pose " + json.dumps(real["target"])); sim.wait(timeout=30)
+            sim.call(f"collide {'on' if real['collide']['on'] else 'off'}")
+            sim.call(f"handover {'on' if real['collide']['handover'] else 'off'}")
+            r = sim.step(cmds, image=os.path.join(HERE, ".plan_sim.jpg"))
+        ok = not any(isinstance(x[1], str) for x in r["ran"]) and not r["blocked"]
+        return {"sim": r, "ok": ok, "real": self.step(cmds) if ok and not dry else None}
 
     def save(self, name):
         self.call(f"save {name}")

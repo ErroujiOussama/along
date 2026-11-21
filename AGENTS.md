@@ -9,6 +9,13 @@ Never open serial ports or cameras yourself, never start a second robotd.
 (x 0.22, y 0), gripper pointing down. Then move with `nudge <side> dx dy dz` (cm; x forward, y arm's left, z up; ≤ 3 cm, keeps
 the gripper orientation, auto-splits into ≤ 5° joint steps), e.g. `robot step "nudge right 2 0 0"` or `"nudge right 0 0 -1"`.
 `robot ik <side> x y z` = dry run (joint targets for a tip position, moves nothing). Joint moves (`move right_wrist_flex 3`) for the rest. Its ~4 lines give per arm the joints, gripper measured vs target + HOLDING, torque, tip xyz (m) and how far the tip moved since the last step (cm).
+**Bold mode (preferred for multi-move tasks):** plan the whole motion once, then `robot plan "<cmd>; <cmd>; ..."`: it runs the plan
+on the sim from the real pose with the same collision model and moves the real arms only if nothing is refused (`--dry` = check only).
+`goto <side> x y z` (m) moves the tip straight to a point; scene.json has the arm bases, mounted cameras, obstacles and the scene
+camera pose (pixel → ray). Replan only when a result shows the plan is going to fail.
+**Collisions:** robotd checks every move against both arms, their mounted cameras, the table and the obstacles in scene.json:
+`refused: …` = that move would hit; `BLOCKED <joint>` = it hit something unmodeled and that arm is held. Back off or take another
+path, never push. `near` lists close pairs. `handover on|off` lets the arms come close to each other.
 Do not write your own step helper and do not open full-res images by default: `robot snap <cam>` only when you need detail.
 
 | joint (deg) | + means | notes (observed on hardware 2026-11-21) |

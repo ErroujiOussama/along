@@ -19,11 +19,16 @@
                                          (auto_exposure=1 exposure_time_absolute=120 · auto_exposure=3 = auto)
   robot view [cam ...]                   live video window, cameras side by side (default all)
   robot stream [port [cam ...]]          the same as a web page (MJPEG, default port 8101; share with tailcat)
+  robot collide [on|off]                 collision model (collide.py + setup.json): moves that would hit the own
+                                         arm/camera, the other arm or the table are refused; shows close pairs
+  robot handover on|off                  let the arms come close to each other (hand-overs)
   robot stop | home | limits | speed 30
   robot step ["move right_elbow_flex -5; nudge right 0 0 -1"]   agent loop: raw cmds (+ nudge), wait until settled,
                                          then a few lines (joints, HOLDING = gripper closed on something,
                                          tip xyz m + how far it moved since the last step)
                                          + ONE image snap_all.jpg (left | right wrist 400x225 on top, scene 800x450 below)
+  robot plan "<step cmds>" [--dry]        bold mode: run the whole plan on the sim (from the real pose, same collision
+                                         model) first; only if nothing is refused/blocked run it on the real arms
   robot raw "move left_elbow_flex -5; wait; snap"   raw robotd protocol, ';' chains, wait = until settled
   robot shutdown [here]                  release torque after going home (or right here)
 
@@ -87,6 +92,11 @@ def step_text(r):
         d = f" (moved {' '.join(f'{v * 100:+.1f}' for v in d)} cm)" if d and any(abs(v) >= 0.002 for v in d) else ""
         out.append(f"{s:6s} {js} {g}{' HOLDING' if a['holding'] else ''}   torque {'on' if a['torque'] else 'OFF'}"
                    f"   tip x{a['tip'][0]:.2f} y{a['tip'][1]:+.2f} z{a['tip'][2]:.2f} m{d}")
+    for e in r.get("blocked", []):
+        out.append(f"BLOCKED {e['joint']} stuck at {e['measured']} (target {e['target']}): something is in the way, "
+                   "that arm is held where it is; back off / take another path, do not push")
+    if r.get("near"):
+        out.append("near   " + " · ".join(r["near"]))
     cams = " | ".join(n + (" MISSING" if n in r["missing_cams"] else "") for n in ("left", "right", "scene"))
     return "\n".join(out + [f"image  {r['image']}  (top: {' | '.join(cams.split(' | ')[:2])}; below, large: {cams.split(' | ')[2]})"])
 
@@ -212,6 +222,22 @@ def main(argv):
         print("saved:", r["saved"] or "-"); return
     if cmd == "step":
         r = bot.step(" ".join(a[1:])); print(json.dumps(r) if as_json else step_text(r)); return
+    if cmd == "plan":
+        dry = "--dry" in a
+        r = bot.plan(" ".join(x for x in a[1:] if x != "--dry"), dry=dry)
+        if as_json:
+            print(json.dumps(r)); return
+        sim = r["sim"]
+        bad = [f"  {c}: {rep[7:]}" for c, rep in sim["ran"] if isinstance(rep, str)]
+        bad += [f"  BLOCKED {e['joint']} at {e['measured']} (target {e['target']})" for e in sim["blocked"]]
+        tips = " · ".join(f"{s} x{a['tip'][0]:.2f} y{a['tip'][1]:+.2f} z{a['tip'][2]:.2f}" for s, a in sim["state"].items())
+        print(f"sim: {'OK' if r['ok'] else 'FAILED, real arms not moved'} ({len(sim['ran'])} cmds; end tips {tips})")
+        print("\n".join(bad + ([f"near at the end: {' · '.join(sim['near'])}"] if sim["near"] else [])))
+        if r["real"]:
+            print(step_text(r["real"]))
+        elif dry and r["ok"]:
+            print("dry run: real arms not moved")
+        return
     if cmd == "raw":
         for c in " ".join(a[1:]).split(";"):
             c = c.strip()
@@ -260,6 +286,9 @@ def main(argv):
         else:
             print("\n".join(f"{s}: {p}" for s, p in bot.snap().items()))
         return
+    elif cmd in ("collide", "handover"):
+        r = bot.call(" ".join(a[:2])); r.pop("ok")
+        print(json.dumps(r, indent=1, ensure_ascii=False)); return
     elif cmd == "speed":
         print(f"{bot.speed(float(a[1]))} deg/s"); return
     elif cmd == "stop":

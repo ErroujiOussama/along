@@ -187,11 +187,15 @@ torque_on = {"left": True, "right": True}
 torque_req = []              # (side, on) applied by the control loop (only it touches the bus)
 running = True
 loop_stats = {"hz": 0.0, "errors": 0}
+BLOCK_DEG, BLOCK_S = 5.0, 0.4  # arm joint pushed > BLOCK_DEG off but not moving for BLOCK_S -> blocked: hold that arm
+events = []                  # recent BLOCKED events (dicts with "t")
+collide_cfg = {"on": True, "handover": False}
 
 
 def control_loop():
     global measured, command, running
     period, n, t_rate, fails, last_reconnect = 1 / HZ, 0, time.perf_counter(), 0, 0.0
+    stuck = {}   # joint -> (since, measured then)
     next_t = time.perf_counter()
     while running:
         try:
@@ -225,6 +229,22 @@ def control_loop():
             for k in KEYS:          # limp arm: targets follow the hand, so torque-on holds the new pose
                 if not torque_on[k.split("_")[0]]:
                     target[k] = command[k] = m[k]; offset[k] = 0.0
+            now = time.time()
+            for k in KEYS:          # block detection: pushing but not moving = something is in the way
+                side = k.split("_")[0]
+                if k.endswith("gripper") or not torque_on[side] or abs(command[k] - m[k]) <= BLOCK_DEG:
+                    stuck.pop(k, None); continue
+                t0, m0 = stuck.setdefault(k, (now, m[k]))
+                if abs(m[k] - m0) > 1.0:
+                    stuck[k] = (now, m[k])
+                elif now - t0 > BLOCK_S:
+                    ev = {"t": now, "joint": k, "target": round(target[k], 1), "measured": round(m[k], 1)}
+                    events.append(ev); del events[:-20]
+                    log(f"BLOCKED {k}: target {ev['target']} measured {ev['measured']} -> holding {side} arm here")
+                    for kk in KEYS:
+                        if kk.startswith(side + "_") and not kk.endswith("gripper"):
+                            target[kk] = command[kk] = m[kk]; offset[kk] = 0.0; stuck.pop(kk, None)
+                    plan[:] = [p for p in plan if not any(kk.startswith(side + "_") for kk in p)]
             # goto waypoints: apply the first one, drop it once the ramp has reached it
             if plan and all(abs(plan[0][k] - command[k]) < 0.5 for k in plan[0]):
                 plan.pop(0)
@@ -379,6 +399,31 @@ def wait_settled(timeout):
     return False
 
 
+def guard(goals):
+    """Raise ValueError if moving to goals (list of {key: deg}, applied in turn) would collide (collide.py)."""
+    if not collide_cfg["on"]:
+        return
+    import collide
+    with lock:
+        start, tgt = dict(command), dict(target)
+    cfg = collide.setup()
+    if collide_cfg["handover"]:
+        cfg["arm_gap"] = 0.0
+    msg = collide.check(start, [{**tgt, **goals[0]}] + goals[1:], cfg)
+    if msg:
+        log(msg)
+        raise ValueError(msg)
+
+
+def collide_state(m):
+    try:
+        import collide
+        cfg = collide.setup()
+        return [f"{lab} {cm:.1f} cm" for lab, cm in collide.near(m, cfg)]
+    except Exception as e:
+        return [f"collision model error: {e}"]
+
+
 def handle(parts):
     global VEL, running
     cmd = parts[0]
@@ -397,7 +442,9 @@ def handle(parts):
             return {"measured": {k: round(v, 1) for k, v in measured.items()},
                     "target": {k: round(v, 1) for k, v in target.items()},
                     "command": {k: round(v, 1) for k, v in command.items()},
-                    "plan": len(plan), "offset": {k: round(v, 1) for k, v in offset.items() if abs(v) > 0.05}, "torque": dict(torque_on), "vel": VEL, "lead": LEAD, "p_gain": P_GAIN, **loop_stats}
+                    "plan": len(plan), "offset": {k: round(v, 1) for k, v in offset.items() if abs(v) > 0.05}, "torque": dict(torque_on), "vel": VEL, "lead": LEAD, "p_gain": P_GAIN, **loop_stats,
+                    "blocked": [dict(e, age_s=round(time.time() - e["t"], 1)) for e in events if time.time() - e["t"] < 120],
+                    "near": collide_state(measured), "collide": dict(collide_cfg)}
     if cmd == "limits":
         return {k: [round(a, 1), round(b, 1)] for k, (a, b) in LIMITS.items()}
     if cmd in ("move", "set"):
@@ -405,11 +452,15 @@ def handle(parts):
         if k not in LIMITS:
             raise ValueError(f"unknown joint {k}")
         with lock:
+            new = clamp(k, target[k] + v if cmd == "move" else v)
+        guard([{k: new}])
+        with lock:
             plan.clear()
-            target[k] = clamp(k, target[k] + v if cmd == "move" else v)
+            target[k] = new
             return {k: round(target[k], 1)}
     if cmd == "pose":
         new = json.loads(" ".join(parts[1:]))
+        guard([{k.removesuffix(".pos"): clamp(k.removesuffix(".pos"), float(v)) for k, v in new.items()}])
         with lock:
             plan.clear()
             for k, v in new.items():
@@ -432,6 +483,16 @@ def handle(parts):
         with lock:
             torque_req.extend((s, parts[2] == "on") for s in sides)
         return {"torque": {s: parts[2] for s in sides}}
+    if cmd in ("collide", "handover"):
+        if len(parts) > 1:
+            if parts[1] not in ("on", "off"):
+                raise ValueError(f"usage: {cmd} [on|off]")
+            collide_cfg["on" if cmd == "collide" else "handover"] = parts[1] == "on"
+            log(f"{cmd} {parts[1]}")
+        import collide
+        with lock:
+            m = dict(measured)
+        return {**collide_cfg, "setup": collide.setup(), "near": collide_state(m)}
     if cmd == "speed":
         VEL = max(1.0, min(120.0, float(parts[1])))
         return {"vel": VEL}
@@ -450,6 +511,7 @@ def handle(parts):
             if err > 0.015 or jump > 8:
                 raise ValueError(f"ik fails at waypoint {i}/{n}: err={err*1000:.0f}mm jump={jump:.0f}deg")
             path.append({f"{side}_{j}": float(v) for j, v in zip(J, qn)}); q = qn
+        guard(path)
         with lock:
             plan[:] = path
         log(f"goto {side} {xyz.round(3).tolist()} ({n} waypoints)")
@@ -463,8 +525,14 @@ def handle(parts):
     if cmd == "poses":
         return {"poses": list(json.load(open(POSES))) if os.path.exists(POSES) else []}
     if cmd == "recall":
-        saved = json.load(open(POSES))[parts[1]]
+        allp = json.load(open(POSES)) if os.path.exists(POSES) else {}
+        if SIM and parts[1] not in allp and os.path.exists(f"{HERE}/poses.json"):   # plan checks use the real poses
+            allp = json.load(open(f"{HERE}/poses.json"))
+        if parts[1] not in allp:
+            raise ValueError(f"unknown pose {parts[1]} (have: {', '.join(allp)})")
+        saved = allp[parts[1]]
         side = parts[2] if len(parts) > 2 else ""
+        guard([{k.removesuffix(".pos"): clamp(k.removesuffix(".pos"), v) for k, v in saved.items() if k.startswith(side)}])
         with lock:
             plan.clear()
             for k, v in saved.items():

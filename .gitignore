@@ -6,3 +6,4 @@ __pycache__/
 snap*.jpg
 sim_poses.json
 .last_tips*.json
+.plan_sim.jpg
