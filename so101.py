@@ -175,11 +175,16 @@ class Robot:
             tiles.append(t)
         return np.hstack(tiles)
 
-    def snap_all(self, path=None, missing=None):
-        """Write one JPEG: wrist cameras on top (left | right, 400x225 each), scene below at 800x450; returns its path."""
+    def snap_all(self, path=None, missing=None, looks=()):
+        """Write one JPEG: wrist cameras on top (left | right, 400x225 each), scene below at 800x450, then (after gotos)
+        a strip of wrist frames taken where each goto ended; returns its path."""
         import cv2, numpy as np
         path = path or os.path.join(HERE, "snap_all.jpg")
-        img = np.vstack([self.mosaic(["left", "right"], missing=missing), self.mosaic(["scene"], 800, 450, missing)])
+        rows = [self.mosaic(["left", "right"], missing=missing), self.mosaic(["scene"], 800, 450, missing)]
+        if looks:
+            strip = np.hstack(list(looks) + [np.zeros((150, 266, 3), np.uint8)] * (3 - len(looks)))
+            rows.append(np.hstack([strip, np.zeros((150, 800 - strip.shape[1], 3), np.uint8)]))
+        img = np.vstack(rows)
         cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return path
 
@@ -202,7 +207,7 @@ class Robot:
         wait until settled, write snap_all.jpg. Command errors are reported, not raised.
         -> {"ran": [[cmd, reply or "ERROR: ..."]], "state": arms() (+ "tip_delta" since the last step),
             "blocked": BLOCKED events during this step, "near": close link pairs, "image", "missing_cams"}"""
-        ran, cmds, t0 = [], [c.strip() for c in cmds.split(";") if c.strip()], time.time()
+        ran, looks, cmds, t0 = [], [], [c.strip() for c in cmds.split(";") if c.strip()], time.time()
         for i, c in enumerate(cmds + ([] if cmds[-1:] == ["wait"] else ["wait"])):
             try:
                 if c == "wait":     # a gripper closed on something never reaches its target: not news
@@ -214,6 +219,7 @@ class Robot:
                     if c.split()[0] == "goto":   # runs in the background (the next command would cancel it): finish it
                         self.wait(); p = c.split()
                         off = sum((a - float(b)) ** 2 for a, b in zip(getattr(self, p[1]).tip(), p[2:5])) ** 0.5
+                        looks.append(self._look(p[1], " ".join(p[:5])))
                         if off > 0.01:
                             raise ValueError(f"tip ended {off * 100:.1f} cm from the goal")
                 r.pop("ok", None)
@@ -232,7 +238,7 @@ class Robot:
             pass
         json.dump({sd: a["tip"] for sd, a in arms.items()}, open(last, "w"))
         out = {"ran": ran, "state": arms, "blocked": [e for e in st.get("blocked", []) if e["t"] >= t0 - 0.5],
-               "near": st.get("near", []), "image": self.snap_all(image, missing=missing), "missing_cams": missing}
+               "near": st.get("near", []), "image": self.snap_all(image, missing=missing, looks=looks[-3:]), "missing_cams": missing}
         try:
             self._record(cmds, out, t0, st)
         except Exception as e:      # the log must never break a step
@@ -308,51 +314,27 @@ class Robot:
             out[side] = [round(float(x), 3) for x in q[:3]]
         return out
 
-    def scan(self, side="right", image=None):
-        """Look around with one arm's wrist camera from a few poses near `ready` (other arm unchanged), then back to ready.
-        -> {"image": scan.jpg (one labelled tile per view + the scene camera), "views": [{"pan", "cam_xyz", "cam_dir"}]}
-        cam_xyz/dir are in that arm's base frame (m): use them to triangulate the object together with `locate`."""
-        import sys, cv2, numpy as np
+    def _cam(self, side, st=None):
+        """Wrist camera position and viewing direction (m, that arm's base frame) from the measured pose."""
+        import sys, numpy as np
         sys.path.insert(0, HERE)
         import collide
-        st = collide.setup(); ready = json.load(open(os.path.join(HERE, "poses.json")))["ready"]
-        q0 = np.array([ready[f"{side}_{j}"] for j in collide.J])
-        cam = st["mounted"].get(side, collide.CAPS["wrist_cam"]); cc = (np.array(cam[1]) + np.array(cam[2])) / 2
-        views, tiles, t0 = [], [], time.time()
-        self.recall("ready", side)
-        for pan, lift, wrist in ((0, 0, 0), (-30, 0, 0), (30, 0, 0), (0, -15, -30)):
-            q = q0 + [pan, lift, 0, wrist, 0]
-            goal = {f"{side}_{j}": round(float(v), 2) for j, v in zip(collide.J, q)}
-            now = self.state()["target"]
-            if collide.check(now, [{**now, **goal}], st):
-                continue                      # this view would hit something (the other arm?): skip it
-            self.set(goal)
-            time.sleep(0.4)
-            m = self.state()["measured"]; F = collide.frames(np.array([m[f"{side}_{j}"] for j in collide.J]))[0, 5]
-            p, d = (F @ np.r_[cc, 1])[:3], F[:3, :3] @ [0, 0, -1.0]
-            v = {"pan": pan, "lift": lift, "wrist": wrist, "cam_xyz": [round(float(x), 3) for x in p],
-                 "cam_dir": [round(float(x), 2) for x in d]}
-            views.append(v)
-            try:
-                t = self.thumb(side, 400, 225).copy()
-            except RobotError as e:
-                t = tile(str(e), 400, 225)
-            for col, th in (((0, 0, 0), 4), ((255, 255, 255), 1)):
-                cv2.putText(t, f"{side} pan{pan:+d} lift{lift:+d} wrist{wrist:+d}", (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, th)
-                cv2.putText(t, f"cam {v['cam_xyz']} dir {v['cam_dir']}", (6, 216), cv2.FONT_HERSHEY_SIMPLEX, 0.42, col, th)
-            tiles.append(t)
-        self.recall("ready", side)
-        path = image or os.path.join(HERE, "scan.jpg")
-        tiles += [tile("view skipped (collision)", 400, 225)] * (4 - len(tiles))
-        img = np.vstack([np.hstack(tiles[:2]), np.hstack(tiles[2:]), self.mosaic(["scene"], 800, 450)])
-        cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        st2 = self.state()
+        m = (st or self.state())["measured"]; F = collide.frames(np.array([m[f"{side}_{j}"] for j in collide.J]))[0, 5]
+        cam = collide.setup()["mounted"].get(side, collide.CAPS["wrist_cam"]); cc = (np.array(cam[1]) + np.array(cam[2])) / 2
+        return [round(float(x), 3) for x in (F @ np.r_[cc, 1])[:3]], [round(float(x), 2) for x in F[:3, :3] @ [0, 0, -1.0]]
+
+    def _look(self, side, label):
+        """Wrist frame right now (266x150) labelled with the goto and the camera pose: the 'scan as you go' strip."""
+        import cv2
         try:
-            self._record([f"scan {side}"], {"ran": [[f"scan {side}", {"views": views}]], "blocked": [], "near": [],
-                                            "state": self.arms(st2), "image": path}, t0, st2)
-        except Exception:
-            pass
-        return {"image": path, "views": views}
+            t = self.thumb(side, 266, 150).copy()
+        except RobotError as e:
+            t = tile(str(e), 266, 150)
+        p, d = self._cam(side)
+        for col, th in (((0, 0, 0), 3), ((255, 255, 255), 1)):
+            cv2.putText(t, label, (4, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.38, col, th)
+            cv2.putText(t, f"cam {p} dir {d}", (4, 144), cv2.FONT_HERSHEY_SIMPLEX, 0.32, col, th)
+        return t
 
     def save(self, name):
         self.call(f"save {name}")

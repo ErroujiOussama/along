@@ -9,8 +9,6 @@
   robot goto left 0.2 0 0.08             Cartesian (m, arm base frame), gripper down
   robot tip left                         gripper tip position (m) from the measured pose
   robot ik right 0.30 0.05 0.06          dry run: joint targets for that tip xyz (pointing down), moves nothing
-  robot scan [right|left]                look around: the wrist cam from 4 poses near ready -> scan.jpg (labelled
-                                         camera xyz/direction per view, + scene camera); back to ready
   robot locate u v [z]                   scene-image pixel (800x450) -> xyz where its ray meets height z (default table),
                                          in both arm frames
   robot save ready | recall ready [left|right] | poses
@@ -32,7 +30,8 @@
   robot step ["move right_elbow_flex -5; goto right 0.2 0 0.05"]   agent loop: raw cmds, wait until settled,
                                          then a few lines (joints, HOLDING = gripper closed on something,
                                          tip xyz m + how far it moved since the last step)
-                                         + ONE image snap_all.jpg (left | right wrist 400x225 on top, scene 800x450 below)
+                                         + ONE image snap_all.jpg (left | right wrist 400x225 on top, scene 800x450 below,
+                                         then a strip: the wrist view where each goto ended, with the camera pose)
   robot plan "<step cmds>" [--dry]        bold mode: run the whole plan on the sim (from the real pose, same collision
                                          model) first; only if nothing is refused/blocked run it on the real arms
   robot raw "move left_elbow_flex -5; wait; snap"   raw robotd protocol, ';' chains, wait = until settled
@@ -332,8 +331,6 @@ def main(argv):
         print(json.dumps(getattr(bot, side(a)).ik(*map(float, a[2:5])))); return
     elif cmd == "nudge":
         sys.exit("nudge is disabled: plan the move and use goto <side> x y z (m), in one `robot plan`")
-    elif cmd == "scan":
-        print(json.dumps(bot.scan(side(a) if len(a) > 1 else "right"))); return
     elif cmd == "locate":
         print(json.dumps(bot.locate(*map(float, a[1:4])))); return
     elif cmd == "tip":
