@@ -44,8 +44,9 @@ systemctl --user stop robotd     # park at rest, release torque
 
 ```bash
 along idle      # once, with the table in its idle state: what the detector (YOLO-World, along_world.pt) may ignore
-along run       # idle until a new object shows up ~1.5 s, then: C920 mic -> ElevenLabs STT -> Codex (tmux `along`,
-                # persona prompts/along.md) -> robot + `along say` (ElevenLabs TTS); back to idle after a quiet minute
+along run       # active only while an object of interest is there (new in the scene, or an arm holding/offering):
+                # C920 mic -> Silero VAD -> ElevenLabs STT -> Codex (tmux `along`, persona prompts/along.md)
+                # -> robot + `along say` (ElevenLabs TTS). Otherwise idle: mic off, no voice commands
 along look "where is the toothbrush?" · along see · along say "hi" · along tell "[voice] hold this"   # detections · speak · type into the Codex session
 ```
 Key: `ELEVENLABS_API_KEY` in `.env`. Watch the agent: `tmux attach -t along`; debug page `robot stream` → `/along`

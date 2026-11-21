@@ -65,7 +65,7 @@ async function poll() {
            + chip(s.speaking ? 'speaking (mic muted)' : 'silent', s.speaking ? 'warn' : '')
            + chip('new-object hits ' + (s.hits || []).filter(Boolean).length + '/4 (3 wakes)', '') : '')
       + chip(d.codex === null ? 'no Codex session' : 'Codex up', d.codex === null ? '' : 'on');
-    $('age').textContent = s ? `${age.toFixed(1)} s old · ${d.idle.length} baseline boxes` + (s.active ? ` · last new ${(d.now - s.last_new).toFixed(0)} s, last voice ${(d.now - s.last_voice).toFixed(0)} s ago (idle after 60/60 + nothing held)` : '') : 'no detections yet (along run not started)';
+    $('age').textContent = s ? `${age.toFixed(1)} s old · ${d.idle.length} baseline boxes` + ` · active because: ${(s.why || []).join(', ') || 'nothing (idle: mic off)'}` : 'no detections yet (along run not started)';
     const nb = new Set((s?.new || []).map(x => x.box.join()));
     $('dets').innerHTML = (s?.all || []).map(x => `<tr class="${nb.has(x.box.join()) ? 'new' : ''}"><td>${esc(x.label)}</td><td>${x.conf.toFixed(2)}</td><td>${x.px.join(', ')}</td><td>${x.box.join(' ')}</td></tr>`).join('');
     $('arms').innerHTML = d.arms.error ? esc(d.arms.error) : Object.entries(d.arms).map(([k, a]) =>

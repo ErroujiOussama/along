@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """along — voice helper around the arms. Idle: only a cheap detector watches the scene camera.
-A new object (not in the idle baseline) for ~1.5 s wakes it: mic on (ElevenLabs speech-to-text), what you say goes to
+Active (mic on, Silero VAD -> ElevenLabs speech-to-text) only while an object of interest is there: a new object (not in
+the idle baseline, 3 of 4 frames to start, kept 8 s after it was last seen) or an arm holding/offering. What you say goes to
 one long-running Codex session (tmux "along", persona prompts/along.md) which acts with `robot` and talks with `along say`.
 
   along run              the daemon (vision + mic + Codex bridge)
@@ -96,7 +97,7 @@ def muted():
 
 
 class Mic:
-    """Energy VAD on 16 kHz mono from PipeWire. Calls on_text(text) per utterance while self.on is set."""
+    """Silero VAD on 16 kHz mono from PipeWire. Calls on_text(text) per utterance while self.on is set."""
     def __init__(self, on_text):
         self.on, self.on_text = threading.Event(), on_text
         threading.Thread(target=self.loop, daemon=True).start()
@@ -110,25 +111,28 @@ class Mic:
             cmd += ["--target", mic]
         log("mic:", mic or "default source")
         p = subprocess.Popen(cmd + ["-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        floor, speech, quiet, pre = 300.0, [], 0, []
+        import torch
+        from silero_vad import load_silero_vad
+        vad = load_silero_vad()
+        speech, quiet, pre = [], 0, []
         while True:
-            chunk = p.stdout.read(960)                     # 30 ms
-            if not chunk:
+            chunk = p.stdout.read(1024)                    # 512 samples = 32 ms (Silero's window)
+            if len(chunk) < 1024:
                 log("mic: pw-record ended"); return
-            if not self.on.is_set() or muted():
+            if not self.on.is_set() or muted():            # gated: nothing of interest in the scene / we are talking
+                if speech or pre:
+                    vad.reset_states()
                 speech, quiet, pre = [], 0, []; continue
-            rms = float(np.sqrt(np.mean(np.frombuffer(chunk, np.int16).astype(np.float32) ** 2)))
-            loud = rms > max(3 * floor, 400)
+            prob = vad(torch.from_numpy(np.frombuffer(chunk, np.int16).astype(np.float32) / 32768), 16000).item()
             if not speech:
-                floor = 0.95 * floor + 0.05 * min(rms, 3 * floor)
-                pre = (pre + [chunk])[-10:]
-                if loud:
-                    speech, quiet = pre + [chunk], 0
+                pre = (pre + [chunk])[-8:]
+                if prob > 0.6:
+                    speech, quiet = pre[:], 0
                 continue
-            speech.append(chunk); quiet = 0 if loud else quiet + 1
-            if quiet > 27 or len(speech) > 500:            # 0.8 s silence / 15 s max
+            speech.append(chunk); quiet = 0 if prob > 0.35 else quiet + 1
+            if quiet > 22 or len(speech) > 470:            # 0.7 s without speech / 15 s max
                 pcm, speech = b"".join(speech), []
-                if len(pcm) > 16000 * 2 * 0.5:
+                if len(pcm) > 16000 * 2 * 0.6:
                     chime(440)
                     threading.Thread(target=self.stt, args=(pcm,), daemon=True).start()
 
@@ -204,13 +208,20 @@ def novel(dets, base):
     return [d for d in dets if d["conf"] >= 0.35 and not any(b["label"] == d["label"] and iou(b["box"], d["box"]) > 0.3 for b in base)]
 
 
-def held(bot):
-    """Maybe holding something: HOLDING, or jaws commanded shut with the arm out (thin things close fully)."""
+def engaged(bot):
+    """Arms tied up with an object of interest (the detector often misses an object in the jaws):
+    'holding' = HOLDING or jaws shut with the arm raised (thin things close fully), 'offering' = jaws open, arm raised."""
     try:
-        tg = bot.state()["target"]
-        return any(a.holding() or (tg[f"{s}_gripper"] <= 10 and a.tip()[2] > 0.12) for s, a in (("left", bot.left), ("right", bot.right)))
-    except Exception:
-        return True
+        tg, why = bot.state()["target"], []
+        for side in ("left", "right"):
+            a = getattr(bot, side); up = a.tip()[2] > 0.12; g = tg[f"{side}_gripper"]
+            if a.holding() or (up and g <= 10):
+                why.append(f"{side} holding")
+            elif up and g >= 25:
+                why.append(f"{side} offering")
+        return why
+    except Exception as e:
+        return [f"robot state unknown ({e})"]
 
 
 def run():
@@ -218,7 +229,7 @@ def run():
     if not os.path.exists(IDLE):
         sys.exit("no idle baseline: clear the table to its idle state and run `along idle` first")
     base = json.load(open(IDLE))
-    active, hits, last_new, last_voice = False, [], 0.0, 0.0
+    active, hits, last_new, last_voice, GRACE = False, [], 0.0, 0.0, 8.0
 
     def heard(text):
         nonlocal last_voice
@@ -236,28 +247,30 @@ def run():
         except Exception as e:
             log("vision error", e); event("error", f"vision: {e}"); time.sleep(2); continue
         new = novel(dets, base)
-        json.dump({"t": t, "active": active, "listening": mic.on.is_set(), "speaking": muted(), "all": dets, "new": new,
-                   "hits": hits, "last_new": last_new, "last_voice": last_voice}, open(SEEN, "w"))
         hits = (hits + [bool(new)])[-4:]
-        if new:
-            last_new = t
         force = os.path.exists(f"{HERE}/.along_force")
         if force:
             os.remove(f"{HERE}/.along_force"); new = new or [{"label": "something", "px": [400, 225]}]
-        if not active and (sum(hits) >= 3 or force):
-            active, last_voice = True, t
-            names = ", ".join(f"{d['label']} at scene px ({d['px'][0]},{d['px'][1]})" for d in new)
+        if sum(hits) >= 3 or force or (active and new):    # object of interest in the scene (3 of 4 frames to start)
+            last_new = t
+        arms = engaged(eyes.bot)
+        why = ([f"new object {t - last_new:.0f}s ago"] if t - last_new < GRACE else []) + arms
+        if not active and why:
+            active = True
+            names = ", ".join(f"{d['label']} at scene px ({d['px'][0]},{d['px'][1]})" for d in new) or ", ".join(arms)
             log("WAKE:", names); event("wake", names)
-            say(f"Hi, I'm Along. Need a hand with the {new[0]['label']}?")
+            say(f"Hi, I'm Along. Need a hand with the {new[0]['label']}?" if new else "Hi, I'm Along. Need a hand?")
             chime(880); mic.on.set()
-            tell(f"[along] Woke up: new in the scene: {names}. I already greeted them and asked if they need a hand "
-                 "with it; the mic is on. Wait for their [voice] request.")
-        elif active and t - last_new > 60 and t - last_voice > 60 and not held(eyes.bot):
+            tell(f"[along] Woke up: {names}. I already greeted them and asked if they need a hand; the mic is on "
+                 "while an object of interest is in the scene or in the jaws. Wait for their [voice] request.")
+        elif active and not why:
             active = False
-            mic.on.clear()
+            mic.on.clear()                                 # nothing of interest: no voice commands go through
             log("back to idle"); event("idle")
-            tell("[along] The scene is back to idle (no new objects, nobody talking for a minute, nothing held). "
+            tell("[along] Back to idle: no new object in the scene and nothing in the jaws; the mic is off. "
                  "Park the arms (robot step \"recall rest\"), silently.")
+        json.dump({"t": t, "active": active, "why": why, "listening": mic.on.is_set(), "speaking": muted(), "all": dets,
+                   "new": new, "hits": hits, "last_new": last_new, "last_voice": last_voice}, open(SEEN, "w"))
         time.sleep(max(0.0, 0.5 - (time.time() - t)))
 
 

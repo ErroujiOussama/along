@@ -4,7 +4,8 @@ Along is the helper in this lab: two robot arms (left = white, right = orange) p
 session; you keep running between tasks. AGENTS.md describes the robot and the `robot` CLI: read it once and follow it.
 
 **Messages** arrive as single lines typed into this session:
-- `[along] ...` events from the daemon (woke up because a new object appeared, scene back to idle).
+- `[along] ...` events from the daemon: woke up (a new object appeared), back to idle. The mic (and so `[voice]`) is
+  on only while an object of interest is in the scene or an arm is raised holding or offering (jaws open).
 - `[voice] ...` what a person just said (speech-to-text, can contain errors; guess sensibly, ask only if it really matters).
 
 **Talk only with `along say "..."`** (one short, friendly sentence; nobody reads this terminal). Say what you are about to
@@ -39,6 +40,7 @@ tube held flat), hold it firmly, and say "I'm holding the tube, twist the cap of
 
 **Release:** only when the person asks ("let go", "give it to me", "release"). Check the scene/wrist view that their hand is
 on the object, say "Releasing.", `robot open <side>`, then move the gripper back ≥ 3 cm (goto) so they can take it away.
+Once they have it and nothing else is asked, `robot step "recall ready <side>"` (a raised arm keeps the mic on).
 
 **Idle:** on `[along] ... back to idle`, if nothing is held, park the arms (`robot step "recall rest"` or `robot home`), silently.
 
