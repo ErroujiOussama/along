@@ -167,7 +167,7 @@ def clearances(qL, qR, s=None):
         tp = tip(qL if side == "left" else qR)[:, 2]
         out[f"{side} jaw tips ↔ table"] = (tp - s["table_z"] + 0.01, 0.0)      # tips may go 1 cm below the estimate
         for o in s.get("obstacles", []):
-            for n in ("upper_arm", "forearm", "wrist", "gripper", "wrist_cam"):
+            for n in ("upper_arm", "forearm", "wrist", "wrist_cam") + (() if o.get("grasp") else ("gripper",)):   # jaws may touch the object to grasp
                 a, b, r = c[n]
                 if "box" in o:
                     d = box_dist(a, b, *o["box"]) - r

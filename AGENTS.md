@@ -11,7 +11,7 @@ the gripper orientation, auto-splits into ≤ 5° joint steps), e.g. `robot step
 `robot ik <side> x y z` = dry run (joint targets for a tip position, moves nothing). Joint moves (`move right_wrist_flex 3`) for the rest. Its ~4 lines give per arm the joints, gripper measured vs target + HOLDING, torque, tip xyz (m) and how far the tip moved since the last step (cm).
 **Bold mode (preferred for multi-move tasks):** plan the whole motion once, then `robot plan "<cmd>; <cmd>; ..."`: it runs the plan
 on the sim from the real pose with the same collision model and moves the real arms only if nothing is refused (`--dry` = check only).
-`goto <side> x y z` (m) moves the tip straight to a point (keeps the gripper orientation and roll; reports if it ends > 1 cm off); scene.json has the arm bases, mounted cameras, obstacles and the scene
+`goto <side> x y z` (m) moves the tip straight to a point (keeps the gripper orientation and roll; if the straight line would hit something it plans a detour; reports if it ends > 1 cm off). `object <name> box|capsule <side> …` (`robot help`) adds the object you will grasp so the arm avoids it (jaws may touch it); scene.json has the arm bases, mounted cameras, obstacles and the scene
 camera pose (pixel → ray). Replan only when a result shows the plan is going to fail.
 **Collisions:** robotd checks every move against both arms, their mounted cameras, the table and the obstacles in scene.json:
 `refused: …` = that move would hit; `BLOCKED <joint>` = it hit something unmodeled and that arm is held. Back off or take another

@@ -18,10 +18,14 @@
   robot cam scene [k=v ...] [reset]      list / set camera controls, saved + re-applied on replug
                                          (auto_exposure=1 exposure_time_absolute=120 · auto_exposure=3 = auto)
   robot view [cam ...]                   live video window, cameras side by side (default all)
-  robot stream [port [cam ...]]          the same as a web page (MJPEG, default port 8101; share with tailcat)
+  robot stream [port [cam ...]]          the same as a web page (MJPEG, default port 8101; share with tailcat);
+                                         /inspect = rollout inspector (every step/plan: cmds, image, 3D replay)
   robot collide [on|off]                 collision model (collide.py + setup.json): moves that would hit the own
                                          arm/camera, the other arm or the table are refused; shows close pairs
   robot handover on|off                  let the arms come close to each other (hand-overs)
+  robot object <name> box <side> cx cy cz sx sy sz [yaw] | <name> capsule <side> ax ay az bx by bz r | clear [name]
+  [solid]                                add an object (m, that arm's base frame): the arm avoids it, the jaws may touch
+                                         it (to grasp) unless `solid`; goto/recall detour around anything in the way
   robot stop | home | limits | speed 30
   robot step ["move right_elbow_flex -5; nudge right 0 0 -1"]   agent loop: raw cmds (+ nudge), wait until settled,
                                          then a few lines (joints, HOLDING = gripper closed on something,
@@ -101,6 +105,66 @@ def step_text(r):
     return "\n".join(out + [f"image  {r['image']}  (top: {' | '.join(cams.split(' | ')[:2])}; below, large: {cams.split(' | ')[2]})"])
 
 
+def _scene(objects=()):
+    """Static collision geometry for the inspector (world = left base frame)."""
+    import collide
+    s = collide.setup()
+    return {"table_z": s["table_z"], "obstacles": s["obstacles"], "objects": list(objects)}
+
+
+def _caps(qd):
+    """{key: deg} both arms -> {"left upper_arm": [a, b, r], ...} capsules in the world frame (collide.py model)."""
+    import collide, numpy as np
+    s, out = collide.setup(), {}
+    for sd in ("left", "right"):
+        q = np.array([[qd[f"{sd}_{j}"] for j in collide.J]])
+        for n, (a, b, r) in collide.capsules(q, sd, s).items():
+            out[f"{sd} {n}"] = [a[0].round(4).tolist(), b[0].round(4).tolist(), r]
+        out[f"{sd} tip"] = collide.base_T(sd, s)[:3, :3].dot(collide.tip(q)[0]).round(4).tolist()
+        out[f"{sd} tip"] = (np.array(out[f"{sd} tip"]) + collide.base_T(sd, s)[:3, 3]).round(4).tolist()
+    return out
+
+
+def inspect_api(h, u):
+    """Rollout inspector: /inspect page, /rollouts.json list, /rollout.json?id= replay, /live.json, /r/<date>/<id>.jpg."""
+    from urllib.parse import parse_qsl
+    q, here = dict(parse_qsl(u.query)), os.path.dirname(os.path.abspath(__file__))
+    root = os.path.join(here, "rollouts")
+    day = q.get("date") or (sorted(os.listdir(root))[-1] if os.path.isdir(root) and os.listdir(root) else "")
+    try:
+        if u.path == "/inspect":
+            return h.send(open(os.path.join(here, "inspect.html"), "rb").read(), "text/html")
+        if u.path.startswith("/r/"):
+            f = os.path.normpath(os.path.join(root, u.path[3:]))
+            if not f.startswith(root) or not os.path.exists(f):
+                h.send_error(404); return
+            return h.send(open(f, "rb").read(), "image/jpeg")
+        if u.path == "/live.json":
+            with Robot() as r:
+                st = r.state()
+            m = st["measured"]
+            return h.send(json.dumps({"caps": _caps(m), "near": st.get("near", []), "plan": st.get("plan", 0),
+                                      "scene": _scene(st.get("collide", {}).get("objects", []))}).encode(), "application/json")
+        recs = []
+        f = os.path.join(root, day, "log.jsonl")
+        if os.path.exists(f):
+            recs = [json.loads(l) for l in open(f) if l.strip()]
+        if u.path == "/rollouts.json":
+            days = sorted(os.listdir(root)) if os.path.isdir(root) else []
+            lst = [{k: v for k, v in x.items() if k != "traj"} for x in recs[-400:]]
+            return h.send(json.dumps({"date": day, "days": days, "steps": lst[::-1]}).encode(), "application/json")
+        rec = next(x for x in recs if x["id"] == q["id"])
+        tr, frames = rec["traj"], []
+        idx = range(0, len(tr["t"]), max(1, len(tr["t"]) // 200))
+        for i in idx:
+            frames.append({"t": round(tr["t"][i] - rec["t0"], 2), "caps": _caps(dict(zip(tr["keys"], tr["q"][i])))})
+        rec = {k: v for k, v in rec.items() if k != "traj"}
+        return h.send(json.dumps({"rec": rec, "frames": frames, "scene": _scene(rec.get("objects", [])), "date": day}).encode(),
+                      "application/json")
+    except Exception as e:
+        return h.send(json.dumps({"error": f"{type(e).__name__}: {e}"}).encode(), "application/json")
+
+
 def stream(names, port):
     """Serve the cameras (through robotd) as MJPEG at http://0.0.0.0:port/."""
     import cv2, threading
@@ -151,6 +215,8 @@ def stream(names, port):
                 self.send_response(200); self.send_header("Content-Type", "image/jpeg")
                 self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(jpg)))
                 self.end_headers(); self.wfile.write(jpg); return
+            if u.path in ("/inspect", "/rollouts.json", "/rollout.json", "/live.json") or u.path.startswith("/r/"):
+                return inspect_api(self, u)
             if u.path != "/stream":
                 return self.send(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "stream.html"), "rb").read(), "text/html")
             self.send_response(200)
@@ -286,8 +352,8 @@ def main(argv):
         else:
             print("\n".join(f"{s}: {p}" for s, p in bot.snap().items()))
         return
-    elif cmd in ("collide", "handover"):
-        r = bot.call(" ".join(a[:2])); r.pop("ok")
+    elif cmd in ("collide", "handover", "object"):
+        r = bot.call(" ".join(a if cmd == "object" else a[:2])); r.pop("ok", None)
         print(json.dumps(r, indent=1, ensure_ascii=False)); return
     elif cmd == "speed":
         print(f"{bot.speed(float(a[1]))} deg/s"); return

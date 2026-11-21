@@ -69,6 +69,7 @@ class Robot:
             raise RobotError(f"robotd socket {sock} exists but cannot be opened ({e.strerror or e}; sandboxed? "
                              "run robot with escalated permissions / full access)") from e
         self._f = self._s.makefile("rw")
+        self.sim, self.tag = os.path.basename(sock).startswith("sim"), None   # tag: plan id for the rollout log
         self.left, self.right = Arm(self, "left"), Arm(self, "right")
 
     # ---- protocol ----
@@ -230,8 +231,30 @@ class Robot:
         except (OSError, ValueError, KeyError):
             pass
         json.dump({sd: a["tip"] for sd, a in arms.items()}, open(last, "w"))
-        return {"ran": ran, "state": arms, "blocked": [e for e in st.get("blocked", []) if e["t"] >= t0 - 0.5],
-                "near": st.get("near", []), "image": self.snap_all(image, missing=missing), "missing_cams": missing}
+        out = {"ran": ran, "state": arms, "blocked": [e for e in st.get("blocked", []) if e["t"] >= t0 - 0.5],
+               "near": st.get("near", []), "image": self.snap_all(image, missing=missing), "missing_cams": missing}
+        try:
+            self._record(cmds, out, t0, st)
+        except Exception as e:      # the log must never break a step
+            out["log_error"] = str(e)
+        return out
+
+    def _record(self, cmds, r, t0, st):
+        """Append this step to rollouts/<date>/log.jsonl (+ its image and 10 Hz joint history) for `robot stream` /inspect."""
+        import shutil
+        if os.environ.get("SO101_NOLOG"):
+            return
+        d = os.path.join(HERE, "rollouts", time.strftime("%Y-%m-%d")); os.makedirs(d, exist_ok=True)
+        rid = time.strftime("%H%M%S") + f"{int(time.time() * 1000) % 1000:03d}" + ("s" if self.sim else "r")
+        if r.get("image") and os.path.exists(r["image"]):
+            shutil.copy(r["image"], os.path.join(d, rid + ".jpg"))
+        tr = self.call(f"traj {t0 - 0.2}")
+        rec = {"id": rid, "t0": t0, "t1": time.time(), "kind": "sim" if self.sim else "real", "plan": self.tag,
+               "cmds": cmds, "ran": [[c, x if isinstance(x, str) else json.dumps(x)[:300]] for c, x in r["ran"]],
+               "blocked": r["blocked"], "near": r["near"], "tips": {sd: a["tip"] for sd, a in r["state"].items()},
+               "objects": st.get("collide", {}).get("objects", []), "traj": {k: tr[k] for k in ("keys", "t", "q")}}
+        with open(os.path.join(d, "log.jsonl"), "a") as f:
+            f.write(json.dumps(rec) + "\n")
 
     def plan(self, cmds, dry=False):
         """Check a whole ';'-separated plan (step commands) on the SIM robotd started from the real pose, then run it for
@@ -259,9 +282,14 @@ class Robot:
             sim.call("pose " + json.dumps(real["target"])); sim.wait(timeout=30)
             sim.call(f"collide {'on' if real['collide']['on'] else 'off'}")
             sim.call(f"handover {'on' if real['collide']['handover'] else 'off'}")
+            sim.call("object set " + json.dumps(real["collide"].get("objects", [])))
+            sim.tag = self.tag = time.strftime("%H%M%S")
             r = sim.step(cmds, image=os.path.join(HERE, ".plan_sim.jpg"))
         ok = not any(isinstance(x[1], str) for x in r["ran"]) and not r["blocked"]
-        return {"sim": r, "ok": ok, "real": self.step(cmds) if ok and not dry else None}
+        try:
+            return {"sim": r, "ok": ok, "real": self.step(cmds) if ok and not dry else None}
+        finally:
+            self.tag = None
 
     def save(self, name):
         self.call(f"save {name}")

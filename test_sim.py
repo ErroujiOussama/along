@@ -2,6 +2,7 @@
     SO101_SIM=1 .venv/bin/python robotd.py &      # sim daemon on ./sim.sock
     SO101_SIM=1 .venv/bin/python test_sim.py
 """
+import os; os.environ["SO101_NOLOG"] = "1"
 import os, sys, time, subprocess, numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 assert os.environ.get("SO101_SIM") == "1", "run with SO101_SIM=1 (never against the real arms)"

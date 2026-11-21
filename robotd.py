@@ -189,7 +189,9 @@ running = True
 loop_stats = {"hz": 0.0, "errors": 0}
 BLOCK_DEG, BLOCK_S = 5.0, 0.4  # arm joint pushed > BLOCK_DEG off but not moving for BLOCK_S -> blocked: hold that arm
 events = []                  # recent BLOCKED events (dicts with "t")
-collide_cfg = {"on": True, "handover": False}
+from collections import deque
+traj = deque(maxlen=6000)   # (t, measured in KEYS order), 10 min at 10 Hz
+collide_cfg = {"on": True, "handover": False, "objects": []}   # objects: agent-placed (world frame), jaws may touch
 
 
 def control_loop():
@@ -216,6 +218,8 @@ def control_loop():
         fails_before = fails
         with lock:
             measured = m
+            if n % 5 == 0:   # 10 Hz joint history for the rollout inspector (`traj`)
+                traj.append((round(time.time(), 2), [round(m[k], 1) for k in KEYS]))
             if fails >= 10:   # bus was gone (e.g. power cut): never jump to old targets, hold here
                 plan.clear(); target.update(m); command.update(m); offset.update({k: 0.0 for k in KEYS})
                 log(f"bus back after {fails} failed reads: holding current pose (targets reset)")
@@ -399,6 +403,9 @@ def wait_settled(timeout):
     return False
 
 
+import collide
+
+
 def guard(goals):
     """Raise ValueError if moving to goals (list of {key: deg}, applied in turn) would collide (collide.py)."""
     if not collide_cfg["on"]:
@@ -406,20 +413,43 @@ def guard(goals):
     import collide
     with lock:
         start, tgt = dict(command), dict(target)
-    cfg = collide.setup()
-    if collide_cfg["handover"]:
-        cfg["arm_gap"] = 0.0
+    cfg = collide_setup()
     msg = collide.check(start, [{**tgt, **goals[0]}] + goals[1:], cfg)
     if msg:
         log(msg)
         raise ValueError(msg)
 
 
+def collide_setup():
+    import collide
+    cfg = collide.setup()
+    cfg["obstacles"] = cfg["obstacles"] + collide_cfg["objects"]
+    if collide_cfg["handover"]:
+        cfg["arm_gap"] = 0.0
+    return cfg
+
+
+def guarded(side, goal_q, path=None):
+    """Waypoints for `side` to joint goal goal_q: the given/straight path if it passes guard(), else a planned
+    detour (planner.py). -> (waypoints, how)."""
+    path = path or [{f"{side}_{j}": float(v) for j, v in zip(collide.J, goal_q)}]
+    try:
+        guard(path); return path, "straight"
+    except ValueError as e:
+        import planner
+        with lock:
+            start = {k: command[k] for k in command}
+        try:
+            wps = planner.plan(side, start, goal_q, LIMITS, collide_setup())
+        except ValueError as e2:
+            raise ValueError(f"{e} (and no detour: {e2})")
+        guard(wps)
+        return wps, f"detour ({len(wps)} waypoints) around {str(e).split(' would')[0].removeprefix('refused: ')}"
+
+
 def collide_state(m):
     try:
-        import collide
-        cfg = collide.setup()
-        return [f"{lab} {cm:.1f} cm" for lab, cm in collide.near(m, cfg)]
+        return [f"{lab} {cm:.1f} cm" for lab, cm in collide.near(m, collide_setup())]
     except Exception as e:
         return [f"collision model error: {e}"]
 
@@ -445,6 +475,11 @@ def handle(parts):
                     "plan": len(plan), "offset": {k: round(v, 1) for k, v in offset.items() if abs(v) > 0.05}, "torque": dict(torque_on), "vel": VEL, "lead": LEAD, "p_gain": P_GAIN, **loop_stats,
                     "blocked": [dict(e, age_s=round(time.time() - e["t"], 1)) for e in events if time.time() - e["t"] < 120],
                     "near": collide_state(measured), "collide": dict(collide_cfg)}
+    if cmd == "traj":   # traj <t0> [t1]: joint history (10 Hz) -> {"keys": KEYS, "t": [...], "q": [[...]]}
+        t0, t1 = float(parts[1]), float(parts[2]) if len(parts) > 2 else time.time() + 1
+        with lock:
+            pts = [p for p in traj if t0 <= p[0] <= t1]
+        return {"keys": KEYS, "t": [p[0] for p in pts], "q": [p[1] for p in pts]}
     if cmd == "limits":
         return {k: [round(a, 1), round(b, 1)] for k, (a, b) in LIMITS.items()}
     if cmd in ("move", "set"):
@@ -483,13 +518,33 @@ def handle(parts):
         with lock:
             torque_req.extend((s, parts[2] == "on") for s in sides)
         return {"torque": {s: parts[2] for s in sides}}
+    if cmd == "object":   # object <name> box <side> cx cy cz sx sy sz [yaw] | <name> capsule <side> ax ay az bx by bz r | clear [name] | set <json>
+        objs = collide_cfg["objects"]
+        if len(parts) > 1 and parts[1] == "clear":
+            objs[:] = [o for o in objs if len(parts) > 2 and o["name"] != parts[2]]
+        elif len(parts) > 1 and parts[1] == "set":
+            objs[:] = json.loads(" ".join(parts[2:]))
+        elif len(parts) > 3:
+            solid = parts[-1] == "solid"; parts = parts[:-1] if solid else parts
+            name, shape, side, v = parts[1], parts[2], parts[3], [float(x) for x in parts[4:]]
+            T = collide.base_T(side, collide.setup())
+            w = lambda p: (T @ np.r_[p, 1.0])[:3].round(4).tolist()
+            if shape == "box" and len(v) in (6, 7):
+                o = {"name": name, "box": (w(v[:3]), v[3:6], (v[6] if len(v) == 7 else 0.0) + float(np.degrees(np.arctan2(T[1, 0], T[0, 0]))))}
+            elif shape == "capsule" and len(v) == 7:
+                o = {"name": name, "cap": (w(v[:3]), w(v[3:6]), v[6])}
+            else:
+                raise ValueError("usage: object <name> box <side> cx cy cz sx sy sz [yaw_deg] | object <name> capsule <side> ax ay az bx by bz r"
+                                 " (m, in that arm's base frame) [solid] | object clear [name]")
+            objs[:] = [x for x in objs if x["name"] != name] + [dict(o, grasp=not solid)]
+            log(f"object {o}")
+        return {"objects": objs, "near": collide_state(dict(measured))}
     if cmd in ("collide", "handover"):
         if len(parts) > 1:
             if parts[1] not in ("on", "off"):
                 raise ValueError(f"usage: {cmd} [on|off]")
             collide_cfg["on" if cmd == "collide" else "handover"] = parts[1] == "on"
             log(f"{cmd} {parts[1]}")
-        import collide
         with lock:
             m = dict(measured)
         return {**collide_cfg, "setup": collide.setup(), "near": collide_state(m)}
@@ -512,14 +567,17 @@ def handle(parts):
             qn = K.inverse_kinematics(q, T, 1.0, 0.1, 60)
             err = float(np.linalg.norm(fk(qn) - T[:3, 3]))
             jump = float(np.abs(qn - q).max())
-            if err > 0.015 or jump > 8:
+            if err > 0.015 or jump > 12:
                 raise ValueError(f"ik fails at waypoint {i}/{n}: err={err*1000:.0f}mm jump={jump:.0f}deg")
             path.append({f"{side}_{j}": float(v) for j, v in zip(J, qn)}); q = qn
-        guard(path)
+        if collide_cfg["on"]:
+            path, how = guarded(side, q, path)
+        else:
+            how = "straight"
         with lock:
             plan[:] = path
-        log(f"goto {side} {xyz.round(3).tolist()} ({n} waypoints)")
-        return {"waypoints": n}
+        log(f"goto {side} {xyz.round(3).tolist()} ({len(path)} waypoints, {how})")
+        return {"waypoints": len(path), "path": how}
     if cmd == "save":
         saved = json.load(open(POSES)) if os.path.exists(POSES) else {}
         with lock:
@@ -536,7 +594,16 @@ def handle(parts):
             raise ValueError(f"unknown pose {parts[1]} (have: {', '.join(allp)})")
         saved = allp[parts[1]]
         side = parts[2] if len(parts) > 2 else ""
-        guard([{k.removesuffix(".pos"): clamp(k.removesuffix(".pos"), v) for k, v in saved.items() if k.startswith(side)}])
+        goal = {k.removesuffix(".pos"): clamp(k.removesuffix(".pos"), v) for k, v in saved.items() if k.startswith(side)}
+        if side and collide_cfg["on"]:   # one arm: take a detour if the direct move would hit something
+            wps, how = guarded(side, [goal[f"{side}_{j}"] for j in collide.J])
+            if how != "straight":
+                with lock:
+                    target[f"{side}_gripper"] = goal[f"{side}_gripper"]; plan[:] = wps
+                log(f"recall {parts[1]} {side}: {how}")
+                return {"recall": parts[1], "path": how}
+        else:
+            guard([goal])
         with lock:
             plan.clear()
             for k, v in saved.items():

@@ -1,0 +1,137 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rollout inspector</title>
+<style>
+:root { --bg:#111418; --panel:#1a1e24; --line:#2b313a; --fg:#e6e9ee; --dim:#8b95a3; --ok:#3fb950; --bad:#f85149; --sim:#58a6ff; --real:#f0883e; }
+* { box-sizing:border-box }
+body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.4 system-ui,sans-serif; display:grid; grid-template-columns:minmax(280px,380px) 1fr; height:100vh }
+#side { border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0 }
+#top { padding:8px; border-bottom:1px solid var(--line); display:flex; gap:6px; align-items:center; flex-wrap:wrap }
+#list { overflow:auto; flex:1 }
+.step { padding:6px 8px; border-bottom:1px solid var(--line); cursor:pointer }
+.step:hover { background:var(--panel) } .step.sel { background:#22303f }
+.step .h { display:flex; gap:6px; align-items:center; color:var(--dim); font-size:11px }
+.b { padding:0 5px; border-radius:3px; font-size:10px; font-weight:600; color:#111 }
+.b.sim { background:var(--sim) } .b.real { background:var(--real) } .b.bad { background:var(--bad); color:#fff } .b.plan { background:#8b95a3 }
+.c { font-family:ui-monospace,monospace; font-size:12px; word-break:break-word; margin-top:2px }
+#main { display:grid; grid-template-rows:1fr auto; min-height:0 }
+#view { position:relative; min-height:0 }
+#view canvas { display:block; width:100%; height:100% }
+#hud { position:absolute; left:8px; top:8px; background:#000a; padding:6px 8px; border-radius:4px; max-width:60%; font-size:12px }
+#bottom { border-top:1px solid var(--line); padding:8px; display:grid; grid-template-columns:1fr auto; gap:10px; max-height:46vh; overflow:auto }
+#ctrl { display:flex; gap:8px; align-items:center; margin-bottom:6px } #ctrl input[type=range] { flex:1 }
+#ran div { font-family:ui-monospace,monospace; font-size:12px } .err { color:var(--bad) }
+#img { max-height:40vh; max-width:42vw; border:1px solid var(--line) }
+button, select { background:var(--panel); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:3px 8px; font:inherit; cursor:pointer }
+button.on { background:#1f6feb; border-color:#1f6feb }
+a { color:var(--sim) }
+@media (max-width:800px) { body { grid-template-columns:1fr; grid-template-rows:35vh 1fr } #img { max-width:90vw } #bottom { grid-template-columns:1fr } }
+</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head><body>
+<div id="side">
+  <div id="top"><button id="live">● Live</button><select id="day"></select><label><input type="checkbox" id="auto" checked> follow new</label><a href="/">cameras</a></div>
+  <div id="list"></div>
+</div>
+<div id="main">
+  <div id="view"><div id="hud">loading…</div></div>
+  <div id="bottom">
+    <div><div id="ctrl"><button id="play">▶</button><input type="range" id="scrub" min="0" max="0" value="0"><span id="time"></span></div><div id="ran"></div></div>
+    <a id="imgl" target="_blank"><img id="img" alt=""></a>
+  </div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+const $ = id => document.getElementById(id);
+const view = $('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true }); view.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x111418);
+const cam = new THREE.PerspectiveCamera(45, 1, 0.01, 10); cam.up.set(0, 0, 1); cam.position.set(0.75, -0.1, 0.5);
+const ctl = new OrbitControls(cam, renderer.domElement); ctl.target.set(0.15, -0.1, 0.05); ctl.update();
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6)); const dl = new THREE.DirectionalLight(0xffffff, 1.2); dl.position.set(1, -1, 2); scene.add(dl);
+const grid = new THREE.GridHelper(1, 20, 0x3a4250, 0x262c35); grid.rotation.x = Math.PI / 2; scene.add(grid);
+function resize() { const r = view.getBoundingClientRect(); renderer.setSize(r.width, r.height, false); cam.aspect = r.width / Math.max(r.height, 1); cam.updateProjectionMatrix(); }
+new ResizeObserver(resize).observe(view);
+(function loop() { requestAnimationFrame(loop); renderer.render(scene, cam); })();
+
+const COL = { left: 0xdfe3e8, right: 0xf08a3e, cam: 0x4a9eff, obst: 0x6e7681, obj: 0x3fb950, tip: 0xff3b6b };
+const mat = (c, o = 1) => new THREE.MeshStandardMaterial({ color: c, transparent: o < 1, opacity: o, roughness: 0.6 });
+const Y = new THREE.Vector3(0, 1, 0);
+function capsule(a, b, r, m) {
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b), L = A.distanceTo(B);
+  const g = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(L, 1e-4), 6, 14), m);
+  g.position.copy(A).add(B).multiplyScalar(0.5);
+  if (L > 1e-6) g.quaternion.setFromUnitVectors(Y, B.clone().sub(A).normalize());
+  return g;
+}
+let staticG = new THREE.Group(), armG = new THREE.Group(), trailG = new THREE.Group(); scene.add(staticG, armG, trailG);
+function clear(g) { while (g.children.length) { const c = g.children.pop(); c.geometry?.dispose(); } }
+let sceneKey = '';
+function drawScene(sc) {
+  const k = JSON.stringify(sc); if (k === sceneKey) return; sceneKey = k; clear(staticG);
+  const t = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.9), mat(0x1d2530, 0.9)); t.position.set(0.2, -0.1, sc.table_z); staticG.add(t);
+  for (const [list, c, o] of [[sc.obstacles, COL.obst, 0.35], [sc.objects, COL.obj, 0.6]]) for (const ob of list || []) {
+    const m = mat(ob.grasp === false ? COL.obst : c, o);
+    if (ob.box) { const [ctr, sz, yaw] = ob.box; const g = new THREE.Mesh(new THREE.BoxGeometry(...sz), m); g.position.set(...ctr); g.rotation.z = (yaw || 0) * Math.PI / 180; staticG.add(g); }
+    if (ob.cap) staticG.add(capsule(ob.cap[0], ob.cap[1], ob.cap[2], m));
+  }
+}
+const armMat = { left: mat(COL.left), right: mat(COL.right), cam: mat(COL.cam), tip: mat(COL.tip) };
+function drawArms(caps, nearTxt) {
+  clear(armG);
+  for (const [n, v] of Object.entries(caps)) {
+    if (n.endsWith(' tip')) { const s = new THREE.Mesh(new THREE.SphereGeometry(0.006), armMat.tip); s.position.set(...v); armG.add(s); continue; }
+    armG.add(capsule(v[0], v[1], v[2], n.includes('cam') ? armMat.cam : armMat[n.split(' ')[0]]));
+  }
+}
+function drawTrail(frames) {
+  clear(trailG);
+  for (const side of ['left', 'right']) {
+    const pts = frames.map(f => new THREE.Vector3(...f.caps[side + ' tip']));
+    if (pts.length > 1) trailG.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: side === 'left' ? 0xaab4c0 : 0xffa060 })));
+  }
+}
+
+// ---- data ----
+let steps = [], sel = null, frames = [], playing = false, liveOn = false, day = '';
+const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const bad = s => s.ran.some(([, x]) => x.startsWith('ERROR') || x.startsWith('refused')) || s.blocked.length;
+const hms = t => new Date(t * 1000).toLocaleTimeString();
+async function loadList() {
+  const r = await (await fetch('/rollouts.json' + (day ? '?date=' + day : ''))).json(); if (r.error) { $('hud').textContent = r.error; return; }
+  const sd = $('day'); if (sd.options.length !== r.days.length) sd.innerHTML = r.days.map(d => `<option ${d === r.date ? 'selected' : ''}>${d}</option>`).join('');
+  const newest = r.steps[0]?.id, changed = newest !== steps[0]?.id; steps = r.steps;
+  $('list').innerHTML = steps.map(s => `<div class="step ${s.id === sel ? 'sel' : ''}" data-id="${s.id}"><div class="h"><span class="b ${s.kind}">${s.kind}</span>${s.plan ? `<span class="b plan">plan ${s.plan}</span>` : ''}${bad(s) ? '<span class="b bad">refused/blocked</span>' : ''}<span>${hms(s.t0)} · ${(s.t1 - s.t0).toFixed(1)} s</span></div><div class="c">${esc(s.cmds.join('; ') || '(look)')}</div></div>`).join('');
+  if (changed && $('auto').checked && !liveOn && newest) open(newest);
+}
+$('list').onclick = e => { const d = e.target.closest('.step'); if (d) { setLive(false); open(d.dataset.id); } };
+$('day').onchange = e => { day = e.target.value; loadList(); };
+async function open(id) {
+  sel = id; document.querySelectorAll('.step').forEach(d => d.classList.toggle('sel', d.dataset.id === id));
+  const r = await (await fetch(`/rollout.json?id=${id}` + (day ? '&date=' + day : ''))).json(); if (r.error) { $('hud').textContent = r.error; return; }
+  frames = r.frames; drawScene(r.scene); drawTrail(frames);
+  $('scrub').max = Math.max(frames.length - 1, 0); $('scrub').value = $('scrub').max; show(+$('scrub').value);
+  const s = r.rec;
+  $('ran').innerHTML = s.ran.map(([c, x]) => `<div class="${x.startsWith('ERROR') || x.startsWith('refused') ? 'err' : ''}">${esc(c)} → ${esc(x)}</div>`).join('')
+    + s.blocked.map(b => `<div class="err">BLOCKED ${esc(JSON.stringify(b))}</div>`).join('')
+    + (s.near.length ? `<div>near: ${esc(s.near.join(' · '))}</div>` : '');
+  $('img').src = `/r/${r.date}/${id}.jpg`; $('imgl').href = $('img').src;
+  $('hud').innerHTML = `<b>${s.kind}</b> ${hms(s.t0)} · ${frames.length} frames · tips ${Object.entries(s.tips).map(([k, v]) => k + ' ' + v.map(x => x.toFixed(2)).join('/')).join(' · ')}`;
+}
+function show(i) { const f = frames[i]; if (!f) return; drawArms(f.caps); $('time').textContent = `${f.t.toFixed(1)} s`; }
+$('scrub').oninput = e => show(+e.target.value);
+$('play').onclick = () => { playing = !playing; $('play').textContent = playing ? '❚❚' : '▶'; if (playing && +$('scrub').value >= frames.length - 1) $('scrub').value = 0; };
+setInterval(() => { if (!playing || liveOn) return; const i = +$('scrub').value + 1; if (i >= frames.length) { playing = false; $('play').textContent = '▶'; return; } $('scrub').value = i; show(i); }, 100);
+
+function setLive(on) { liveOn = on; $('live').classList.toggle('on', on); if (on) clear(trailG); }
+$('live').onclick = () => setLive(!liveOn);
+setInterval(async () => {
+  if (!liveOn) return;
+  const r = await (await fetch('/live.json')).json(); if (r.error) { $('hud').textContent = r.error; return; }
+  drawScene(r.scene); drawArms(r.caps);
+  $('hud').innerHTML = `<b>live</b> · ${r.plan ? r.plan + ' waypoints queued · ' : ''}${r.near.length ? 'near: ' + esc(r.near.join(' · ')) : 'nothing close'}`;
+}, 250);
+setInterval(loadList, 2000); loadList().then(() => { if (!steps.length) setLive(true); });
+</script>
+</body></html>

@@ -31,7 +31,7 @@ robot snap [left|right|scene]    # full-res newest frames → snap_<cam>.jpg (on
 robot cams                       # which cameras deliver (unplugged = grey tile in step/view/stream)
 robot cam scene [k=v ...|reset]  # V4L2 controls (exposure, gain, focus, …), saved in cams.json, re-applied on replug
 robot view [cam ...]             # live video window, all cameras side by side (through robotd)
-robot stream [port]              # same as a web page (MJPEG, :8101)
+robot stream [port]              # same as a web page (MJPEG, :8101); /inspect = rollout inspector (steps, images, 3D replay, live)
                                  # page has a "camera settings" panel (same as robot cam; open directly with /#settings)
                                  # share: `tailcat serve exec -- socat - TCP:127.0.0.1:8101`, viewers `tailcat browse <addr>`
 robot raw "move right_elbow_flex -5; wait; snap"   # raw protocol; ';' chains, wait = until settled
