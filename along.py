@@ -22,6 +22,8 @@ SEEN, IDLE, MUTE = f"{HERE}/.along_seen.json", f"{HERE}/along_idle.json", f"{HER
 HELD = f"{HERE}/.along_held.json"                        # {"left": "toothbrush"}: what each arm holds (set by the agent)
 EVENTS = f"{HERE}/.along_events.jsonl"                    # conversation + state history (debug page /along)
 TMUX, W, H = "along", 800, 450
+ROI, CHANGE = (150, 60, 650, 430), 0.02                    # centre of the table (scene px) where new things wake Along
+BG = f"{HERE}/along_idle_bg.npy"
 CODEX = ["codex", "--dangerously-bypass-approvals-and-sandbox", "--disable", "hooks", "-C", HERE,
          "-m", "gpt-6.2-sol", "-c", "model_auto_compact_token_limit=100000"]
 
@@ -99,6 +101,14 @@ def muted():
         return False
 
 
+def spoke_left(window=20.0):
+    """Seconds left in which a reply counts without saying "Along" (0 = closed)."""
+    try:
+        return max(0.0, round(window - (time.time() - float(open(f"{HERE}/.along_spoke").read())), 1))
+    except (FileNotFoundError, ValueError):
+        return 0.0
+
+
 def addressed(text, window=20.0):
     """Busy room: only speech that names Along, or comes within `window` s after Along last spoke (a reply), counts."""
     import re
@@ -113,7 +123,7 @@ def addressed(text, window=20.0):
 class Mic:
     """Silero VAD on 16 kHz mono from PipeWire. Calls on_text(text) per utterance while self.on is set."""
     def __init__(self, on_text):
-        self.on, self.on_text = threading.Event(), on_text
+        self.on, self.on_text, self.phase, self.prob, self.stt_busy = threading.Event(), on_text, "starting", 0.0, False
         threading.Thread(target=self.loop, daemon=True).start()
 
     def loop(self):
@@ -134,10 +144,12 @@ class Mic:
             if len(chunk) < 1024:
                 log("mic: pw-record ended"); return
             if not self.on.is_set() or muted():            # gated: nothing of interest in the scene / we are talking
+                self.phase, self.prob = ("muted" if self.on.is_set() else "off"), 0.0
                 if speech or pre:
                     vad.reset_states()
                 speech, quiet, pre = [], 0, []; continue
             prob = vad(torch.from_numpy(np.frombuffer(chunk, np.int16).astype(np.float32) / 32768), 16000).item()
+            self.prob, self.phase = prob, ("speech" if speech or prob > 0.6 else "listening")
             if not speech:
                 pre = (pre + [chunk])[-8:]
                 if prob > 0.6:
@@ -151,10 +163,13 @@ class Mic:
                     threading.Thread(target=self.stt, args=(pcm,), daemon=True).start()
 
     def stt(self, pcm):
+        self.stt_busy = True
         try:
             t = transcribe(pcm)
         except Exception as e:
             log("stt error", e); event("error", f"stt: {e}"); return
+        finally:
+            self.stt_busy = False
         log("heard:", repr(t))
         if t and addressed(t):
             event("heard", t)
@@ -231,12 +246,32 @@ class Eyes:
                 pts.append((W / 2 + fp * d @ r / (d @ f), H / 2 - fp * d @ up / (d @ f)))
         return pts
 
+    def change(self, img, arm):
+        """Fraction of the centre ROI that differs from the idle background (class-agnostic: the detector misses a
+        toothbrush in a hand). Arm links are masked; the background follows slow light changes while nothing changed."""
+        import cv2, numpy as np
+        g = cv2.GaussianBlur(cv2.cvtColor(cv2.resize(img, (W // 4, H // 4)), cv2.COLOR_BGR2GRAY), (5, 5), 0).astype(np.float32)
+        if getattr(self, "bg", None) is None:
+            self.bg = np.load(BG) if os.path.exists(BG) and not hasattr(self, "bg") else g.copy()
+        d = g - self.bg; d = np.abs(d - np.median(d))          # minus the global shift (auto exposure)
+        m = np.zeros_like(g, np.uint8); x0, y0, x1, y1 = (v // 4 for v in ROI); m[y0:y1, x0:x1] = 1
+        for u, v in arm:
+            cv2.circle(m, (int(u) // 4, int(v) // 4), 14, 0, -1)
+        ch = (d > 28) & (m > 0); frac = float(ch.sum()) / max(1, int(m.sum()))
+        if frac < CHANGE / 3:
+            self.bg += 0.05 * (g - self.bg)
+        ys, xs = np.nonzero(ch)
+        self.blob = [int(xs.mean() * 4), int(ys.mean() * 4)] if len(xs) else None
+        return frac
+
     def detect(self):
-        r = self.m.predict(self.bot.thumb("scene", W, H), verbose=False, conf=self.conf)[0]
+        img = self.bot.thumb("scene", W, H)
+        r = self.m.predict(img, verbose=False, conf=self.conf)[0]
         try:
             arm = self.arm_px()
         except Exception:
             arm = []
+        self.frac = round(self.change(img, arm), 3)
         out = []
         for c, s, x in zip(r.boxes.cls, r.boxes.conf, r.boxes.xyxy):
             x = [int(v) for v in x]
@@ -247,8 +282,15 @@ class Eyes:
         return out
 
 
+def in_roi(px):
+    return ROI[0] <= px[0] <= ROI[2] and ROI[1] <= px[1] <= ROI[3]
+
+
 def novel(dets, base):
-    return [d for d in dets if d["conf"] >= 0.35 and not d.get("arm") and not any(b["label"] == d["label"] and iou(b["box"], d["box"]) > 0.3 for b in base)]
+    """Detections that count for waking: centre of the table only, any class (names are unreliable), not on an arm,
+    not where the idle baseline already had a box."""
+    return [d for d in dets if d["conf"] >= 0.15 and in_roi(d["px"]) and not d.get("arm")
+            and not any(iou(b["box"], d["box"]) > 0.3 for b in base)]
 
 
 def rd_held():
@@ -280,7 +322,7 @@ def run():
     if not os.path.exists(IDLE):
         sys.exit("no idle baseline: clear the table to its idle state and run `along idle` first")
     base = json.load(open(IDLE))
-    active, hits, last_new, last_voice, GRACE = False, [], 0.0, 0.0, 8.0
+    active, hits, last_new, last_voice, woke, GRACE = False, [], 0.0, 0.0, 0.0, 8.0
 
     def heard(text):
         nonlocal last_voice
@@ -298,6 +340,8 @@ def run():
         except Exception as e:
             log("vision error", e); event("error", f"vision: {e}"); time.sleep(2); continue
         new = novel(dets, base)
+        if not new and eyes.frac > CHANGE and eyes.blob:
+            new = [{"label": "change", "conf": eyes.frac, "px": eyes.blob, "box": [eyes.blob[0] - 20, eyes.blob[1] - 20, eyes.blob[0] + 20, eyes.blob[1] + 20]}]
         hits = (hits + [bool(new)])[-4:]
         force = os.path.exists(f"{HERE}/.along_force")
         if force:
@@ -305,9 +349,11 @@ def run():
         if sum(hits) >= 3 or force or (active and new):    # object of interest in the scene (3 of 4 frames to start)
             last_new = t
         arms = engaged(eyes.bot)
+        if active and not arms and new and new[0]["label"] == "change" and t - max(last_voice, woke) > 60:
+            eyes.bg = None; log("change left alone 60 s: it is part of the scene now")   # re-learn the background
         why = ([f"new object {t - last_new:.0f}s ago"] if t - last_new < GRACE else []) + arms
         if not active and why:
-            active = True
+            active, woke = True, t
             names = (", ".join(f"scene px ({d['px'][0]},{d['px'][1]})" for d in new)
                      and "something new at " + ", ".join(f"scene px ({d['px'][0]},{d['px'][1]})" for d in new)) or ", ".join(arms)
             log("WAKE:", names, [d.get("label") for d in new]); event("wake", names)
@@ -322,8 +368,9 @@ def run():
             log("back to idle"); event("idle")
             tell("[along] Back to idle: no new object in the scene and nothing in the jaws; the mic is off. "
                  "Park the arms (robot step \"recall rest\"), silently.")
-        json.dump({"t": t, "active": active, "why": why, "listening": mic.on.is_set(), "speaking": muted(), "all": dets,
-                   "new": new, "arm_px": getattr(eyes, "arm", []), "held": rd_held(), "hits": hits, "last_new": last_new, "last_voice": last_voice}, open(SEEN, "w"))
+        json.dump({"t": t, "active": active, "why": why, "listening": mic.on.is_set(), "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy,
+                   "reply_open": spoke_left(), "speaking": muted(), "all": dets,
+                   "new": new, "arm_px": getattr(eyes, "arm", []), "held": rd_held(), "hits": hits, "change": eyes.frac, "roi": ROI, "last_new": last_new, "last_voice": last_voice}, open(SEEN, "w"))
         time.sleep(max(0.0, 0.5 - (time.time() - t)))
 
 
@@ -387,6 +434,7 @@ def main():
         tell(t)
     elif a[0] == "idle":
         e = Eyes(conf=0.1); d = [x for _ in range(6) for x in e.detect()]   # union of a few frames: flicker-proof
+        import numpy as np; np.save(BG, e.bg)
         json.dump(d, open(IDLE, "w"))
         print("idle baseline:", [x["label"] for x in d])
     elif a[0] == "see":

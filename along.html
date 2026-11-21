@@ -28,11 +28,17 @@ form{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px} input{flex:1;min-width:
 button{background:#222;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 9px;cursor:pointer} button:hover{border-color:var(--acc)}
 .arms{display:flex;gap:14px;font-size:12px;flex-wrap:wrap}
 label{font-size:12px;color:var(--dim)}
+#banner{display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:12px 14px;font-size:22px;font-weight:600;color:#fff;background:#333}
+#banner.idle{background:#2a2a2a;color:#aaa} #banner.listening{background:#1f6f34} #banner.speech{background:#1f5fae}
+#banner.muted{background:#9a6a10} #banner.stt{background:#6b3fa8} #banner.down{background:#8b1d1d}
+#banner small{font-size:14px;font-weight:normal;opacity:.9} #vad{width:120px;height:10px;background:#0006;border-radius:5px;overflow:hidden}
+#vad i{display:block;height:100%;background:#fff}
 </style></head><body>
 <header><b>along</b><span id="chips"></span><span style="flex:1"></span><a href="/">cameras</a><a href="/inspect">inspector</a></header>
+<div id="banner" class="idle">…</div>
 <main>
  <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
-  <section><h3>Scene detector <span>green = new (wakes it) · orange = known · magenta = on an arm (ignored) · grey = idle baseline</span></h3>
+  <section><h3>Scene detector <span>cyan = wake zone · green = new (wakes it) · orange = known · magenta = on an arm (ignored) · grey = idle baseline</span></h3>
    <img id="scene" alt="scene camera with detection boxes"></section>
   <section><h3>Detections <span id="age"></span></h3><table><thead><tr><th>label</th><th>conf</th><th>px (locate)</th><th>box</th></tr></thead><tbody id="dets"></tbody></table>
    <div class="arms" id="arms" style="margin-top:8px"></div></section>
@@ -65,6 +71,15 @@ async function poll() {
            + chip(s.speaking ? 'speaking (mic muted)' : 'silent', s.speaking ? 'warn' : '')
            + chip('new-object hits ' + (s.hits || []).filter(Boolean).length + '/4 (3 wakes)', '') : '')
       + chip(d.codex === null ? 'no Codex session' : 'Codex up', d.codex === null ? '' : 'on');
+    const b = $('banner'), why = (s?.why || []).join(', ');
+    let cls, big, small;
+    if (!d.daemon || !s || age > 5) { cls = 'down'; big = 'NOT RUNNING'; small = d.daemon ? `daemon state ${age?.toFixed(0)} s old` : 'along run is not running: nothing is watched or heard'; }
+    else if (!s.active) { cls = 'idle'; big = 'IDLE · mic OFF'; small = `not listening. Wakes on something new in the wake zone (change ${((s.change||0)*100).toFixed(1)}%, needs >2% in 3 of 4 frames; hits ${(s.hits||[]).filter(Boolean).length}/4)`; }
+    else if (s.mic === 'muted') { cls = 'muted'; big = 'ACTIVE · Along is talking (mic muted)'; small = 'because: ' + why; }
+    else if (s.stt) { cls = 'stt'; big = 'ACTIVE · transcribing…'; small = 'because: ' + why; }
+    else if (s.mic === 'speech') { cls = 'speech'; big = 'ACTIVE · hearing speech'; small = 'because: ' + why; }
+    else { cls = 'listening'; big = 'ACTIVE · LISTENING'; small = (s.reply_open > 0 ? `reply window open ${s.reply_open.toFixed(0)} s: just talk` : 'start with "Along, …"') + ' · because: ' + why; }
+    b.className = cls; b.innerHTML = `<span>${big}</span><span id="vad" title="voice probability"><i style="width:${Math.round((s?.vad||0)*100)}%"></i></span><small>${esc(small)}</small>`;
     $('age').textContent = s ? `${age.toFixed(1)} s old · ${d.idle.length} baseline boxes` + ` · active because: ${(s.why || []).join(', ') || 'nothing (idle: mic off)'}` : 'no detections yet (along run not started)';
     const nb = new Set((s?.new || []).map(x => x.box.join()));
     $('dets').innerHTML = (s?.all || []).map(x => `<tr class="${nb.has(x.box.join()) ? 'new' : ''}"><td>${esc(x.label)}</td><td>${x.conf.toFixed(2)}</td><td>${x.px.join(', ')}</td><td>${x.box.join(' ')}</td></tr>`).join('');
