@@ -191,6 +191,7 @@ BLOCK_DEG, BLOCK_S = 5.0, 0.4  # arm joint pushed > BLOCK_DEG off but not moving
 events = []                  # recent BLOCKED events (dicts with "t")
 from collections import deque
 traj = deque(maxlen=6000)   # (t, measured in KEYS order), 10 min at 10 Hz
+MIN_MOVE, MIN_GOTO, MIN_DEG = not SIM, 0.02, 5.0   # real arms: no tiny careful corrections
 collide_cfg = {"on": SIM, "handover": False, "objects": []}   # objects: agent-placed (world frame), jaws may touch
 
 
@@ -433,6 +434,8 @@ def guarded(side, goal_q, path=None):
     """Waypoints for `side` to joint goal goal_q: the given/straight path if it passes guard(), else a planned
     detour (planner.py). -> (waypoints, how)."""
     path = path or [{f"{side}_{j}": float(v) for j, v in zip(collide.J, goal_q)}]
+    if not collide_cfg["on"]:
+        return path, "straight"
     with lock:
         start, tgt = dict(command), dict(target)
     e = collide.check(start, [{**tgt, **path[0]}] + path[1:], collide_setup())   # planning uses the model even when live checks are off
@@ -488,6 +491,9 @@ def handle(parts):
             raise ValueError(f"unknown joint {k}")
         with lock:
             new = clamp(k, target[k] + v if cmd == "move" else v)
+            if MIN_MOVE and not k.endswith(("gripper", "wrist_roll")) and 0 < abs(new - target[k]) < MIN_DEG:
+                raise ValueError(f"{k} change {new - target[k]:+.1f} deg is too small: joint moves are >= {MIN_DEG} deg "
+                                 "(no creeping; estimate better and make one decisive move)")
         guard([{k: new}])
         with lock:
             plan.clear()
@@ -559,6 +565,9 @@ def handle(parts):
         with lock:
             q = np.array([target[f"{side}_{j}"] for j in J])
         T0 = K.forward_kinematics(q); start = T0[:3, 3].copy(); n = max(int(np.linalg.norm(xyz - start) / 0.005), 1)
+        if MIN_MOVE and np.linalg.norm(xyz - start) < MIN_GOTO:
+            raise ValueError(f"goto of {np.linalg.norm(xyz - start) * 100:.1f} cm is too small: gotos are >= {MIN_GOTO * 100:.0f} cm "
+                             "(no creeping; estimate better and make one decisive move)")
         path = []
         for i in range(1, n + 1):
             T = T0.copy(); T[:3, 3] = start + (xyz - start) * i / n

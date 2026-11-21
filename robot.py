@@ -6,11 +6,9 @@
   robot move left elbow -5               relative (deg; gripper in %)
   robot set right lift -40               absolute
   robot open left | close left | grip right 30
-  robot goto left 0.2 0 0.08             Cartesian (m, arm base frame), gripper down
+  robot goto left 0.2 0 0.08             straight line to that tip xyz (m, arm base frame), keeps the gripper orientation
   robot tip left                         gripper tip position (m) from the measured pose
   robot ik right 0.30 0.05 0.06          dry run: joint targets for that tip xyz (pointing down), moves nothing
-  robot locate u v [z]                   scene-image pixel (800x450) -> xyz where its ray meets height z (default table),
-                                         in both arm frames
   robot save ready | recall ready [left|right] | poses
   robot torque off left | torque on [all]   limp for hand-guiding (HOLD THE ARM) / hold the new pose
   robot snap [left|right|scene] [path]   camera frames (default all connected: snap_<cam>.jpg)
@@ -18,26 +16,17 @@
   robot cam scene [k=v ...] [reset]      list / set camera controls, saved + re-applied on replug
                                          (auto_exposure=1 exposure_time_absolute=120 · auto_exposure=3 = auto)
   robot view [cam ...]                   live video window, cameras side by side (default all)
-  robot stream [port [cam ...]]          the same as a web page (MJPEG, default port 8101; share with tailcat);
-                                         /inspect = rollout inspector (every step/plan: cmds, image, 3D replay)
-  robot collide [on|off]                 collision model (collide.py + setup.json): moves that would hit the own
-                                         arm/camera, the other arm or the table are refused; shows close pairs
-  robot handover on|off                  let the arms come close to each other (hand-overs)
-  robot object <name> box <side> cx cy cz sx sy sz [yaw] | <name> capsule <side> ax ay az bx by bz r | clear [name]
-  [solid]                                add an object (m, that arm's base frame): the arm avoids it, the jaws may touch
-                                         it (to grasp) unless `solid`; goto/recall detour around anything in the way
+  robot stream [port [cam ...]]          the same as a web page (MJPEG, default port 8101); /inspect = rollout inspector
   robot stop | home | limits | speed 30
-  robot step ["move right_elbow_flex -5; goto right 0.2 0 0.05"]   agent loop: raw cmds, wait until settled,
+  robot step ["move right_elbow_flex -10; goto right 0.25 0 0.08"]   agent loop: raw cmds, wait until settled,
                                          then a few lines (joints, HOLDING = gripper closed on something,
                                          tip xyz m + how far it moved since the last step)
-                                         + ONE image snap_all.jpg (left | right wrist 400x225 on top, scene 800x450 below,
-                                         then a strip: the wrist view where each goto ended, with the camera pose)
-  robot plan "<step cmds>" [--dry]        bold mode: run the whole plan on the sim (from the real pose, same collision
-                                         model) first; only if nothing is refused/blocked run it on the real arms
+                                         + ONE image snap_all.jpg (left | right wrist 400x225 on top, scene 800x450 below)
   robot raw "move left_elbow_flex -5; wait; snap"   raw robotd protocol, ';' chains, wait = until settled
   robot shutdown [here]                  release torque after going home (or right here)
 
 Joints: pan lift elbow wrist roll gripper. Sides: left/l (white), right/r (orange).
+Real arms: gotos move >= 2 cm and joint moves >= 5 deg (gripper and roll free): no creeping.
 Flags: --json machine-readable output, --no-wait return before the motion finishes.
 """
 import json, os, sys, time
