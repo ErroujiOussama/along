@@ -55,6 +55,7 @@ bot.left.move(elbow=-5); bot.right.goto(0.2, 0, 0.08); bot.left.torque(False); i
   A small integral term (≤ 6°) cancels gravity sag.
 - Torque off: the arm's targets follow your hand, and motion commands for it are rejected.
 - Power cut: robotd sends nothing; when the bus returns it re-applies servo settings and holds the current pose.
+- USB replug: it reopens the ports by their by-id paths every 2 s until the arms answer, then holds the current pose.
 - Crash: systemd restarts it, holding the pose it finds.
 - Knobs: `SO101_P` (servo P, 16), `SO101_VEL`, `SO101_LEAD`, `SO101_KI`.
 - No hardware: `SO101_SIM=1` on robotd and on any client (own socket and poses); then `SO101_SIM=1 .venv/bin/python test_sim.py`.

@@ -142,6 +142,19 @@ def reconfigure():
             arm_torque(side, False)
 
 
+def reconnect():
+    """USB replug / power cycle: drop the dead port handles and reopen both arms by their by-id paths."""
+    if SIM:
+        return
+    for side in ("left", "right"):
+        bus = getattr(robot, f"{side}_arm").bus
+        try:
+            bus.disconnect(disable_torque=False)
+        except Exception:
+            bus._bus = None
+        bus.connect()   # raises while the adapter or the servo power is missing; retried by the loop
+
+
 def send(out):
     if SIM:
         robot.send_action(out); return
@@ -172,7 +185,7 @@ loop_stats = {"hz": 0.0, "errors": 0}
 
 def control_loop():
     global measured, command, running
-    period, n, t_rate, fails = 1 / HZ, 0, time.perf_counter(), 0
+    period, n, t_rate, fails, last_reconnect = 1 / HZ, 0, time.perf_counter(), 0, 0.0
     next_t = time.perf_counter()
     while running:
         try:
@@ -181,6 +194,13 @@ def control_loop():
             loop_stats["errors"] += 1; fails += 1
             if fails == 1 or fails % 250 == 0:
                 log(f"WARN read failed ({fails}x): {e}")
+            if fails >= 25 and time.time() - last_reconnect > 2:
+                last_reconnect = time.time()
+                try:
+                    reconnect(); log("serial ports reopened")
+                except Exception as e:
+                    if fails % 250 < 25:
+                        log(f"reconnect failed: {str(e).strip().splitlines()[0][:120]}")
             time.sleep(period); next_t = time.perf_counter()
             continue
         fails_before = fails
@@ -446,7 +466,8 @@ def client(conn):
                     log(" ".join(parts) + " -> " + json.dumps(reply)[:200])
             except Exception as e:
                 reply = {"ok": False, "error": str(e)}
-                log(f"ERR {' '.join(parts)}: {e}")
+                if parts[0] != "thumb":   # panels poll thumb ~10x/s; don't flood the log
+                    log(f"ERR {' '.join(parts)}: {e}")
             f.write(json.dumps(reply) + "\n"); f.flush()
 
 
@@ -460,7 +481,10 @@ log(f"robotd ready{' (SIM)' if SIM else ''}: {HZ} Hz, vel {VEL} deg/s, lead {LEA
 try:
     control_loop()
 finally:
-    robot.disconnect()
+    try:
+        robot.disconnect()
+    except Exception as e:
+        log(f"disconnect failed (bus gone?): {e}")
     if os.path.exists(SOCK):
         os.unlink(SOCK)
     log("robotd stopped, torque released")
