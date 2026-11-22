@@ -53,7 +53,8 @@ Tools the fast model has (so the strategy can name them):
 - built-ins: hold, release, turn <deg>, tilt <deg>, press, open, park, reset, stop,
   answer (just talk), codex (hand the rest to the slow agent), none
 - step: robot step cmds, ';'-chained: goto <side> x y z (>= 2 cm), goto <side> px u v z (scene pixel at height z: the
-  engine locates it; the fast model cannot run `robot locate` itself), move <side>_<joint> <deg> (>= 5), set <side>_gripper
+  engine locates it; the fast model cannot run `robot locate` itself), goto <side> base u v z (u v = where the object
+  stands on the table: x, y from that, z as given; accurate for anything standing on the table), move <side>_<joint> <deg> (>= 5), set <side>_gripper
   <0-100>, recall ready|rest <side>, nudge
 - press: object = scene pixel u v + height_cm of the point to press, depth_cm
 - check: "<question about fresh images>" -> the model looks again and returns corrected remaining steps (closed loop)

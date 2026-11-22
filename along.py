@@ -510,7 +510,9 @@ Actions:
 - step: a short direct move sequence for robot step, ';'-chained: goto <side> x y z (m, that arm's base frame: x forward,
   y to the arm's left, z up, table z -0.02; >= 2 cm), move <side>_<joint> <deg> (relative, >= 5), set <side>_gripper
   <0-100> (0 closed), recall ready|rest <side>, goto <side> px u v z (scene pixel u v at height z m: located for you,
-  use it for anything you see). Joints: shoulder_pan (+ toward the arm's own right), shoulder_lift,
+  use it for anything you see), goto <side> base u v z (u v = where the object stands ON THE TABLE (bottom of a bottle):
+  x, y from that, z = the height you give: far more accurate than px for anything standing on the table, because a
+  wrong height guess with px shifts x a lot (5 cm too high = ~6 cm too far)). Joints: shoulder_pan (+ toward the arm's own right), shoulder_lift,
   elbow_flex, wrist_flex (+ tips down), wrist_roll, gripper. E.g. "open the left gripper" = set left_gripper 100.
   A target a little past the arm's reach goes to the nearest point it reaches; one > 4 cm past it fails (then use the
   other arm, or ask the person to bring it closer). Pick the arm nearer to the object (image-left = orange/right).
@@ -873,6 +875,10 @@ def do_step(r, text, done, last, cli=False):
                 from so101 import Robot
                 g = ["goto", g[1], *(f"{v:.3f}" for v in Robot().locate(float(g[3]), float(g[4]), float(g[5]))[g[1]])]
                 c = " ".join(g)
+            elif g[0] == "goto" and len(g) == 6 and g[2] == "base":   # goto <side> base u v z: x, y from where the object
+                from so101 import Robot                   # stands on the table (known height: accurate), z as given
+                bx, by, _ = Robot().locate(float(g[3]), float(g[4]))[g[1]]
+                g = ["goto", g[1], f"{bx:.3f}", f"{by:.3f}", g[5]]; c = " ".join(g)
             if g[0] == "goto" and len(g) == 5:            # coarse guesses: the nearest point the arm really reaches
                 x, y, z = map(float, g[2:5]); rx, ry, rz = reachable(g[1], x, y, z, drop=0.02)   # pull back, barely lower
                 off = ((rx - x) ** 2 + (ry - y) ** 2 + (rz - z) ** 2) ** 0.5
@@ -882,7 +888,14 @@ def do_step(r, text, done, last, cli=False):
                     event("skill", why); return False, why
                 if off > 0.005:
                     c = f"goto {g[1]} {rx:.3f} {ry:.3f} {rz:.3f}"; event("skill", f"{' '.join(g)} is past the arm's reach: {c}")
-            o_ = rstep(c); out += o_ + "\n"
+            o_ = rstep(c)
+            if g[0] == "goto" and len(g) == 5 and any("ik fails at waypoint" in e for e in robot_errs(o_)):
+                from so101 import Robot                   # the straight line flips the wrist: go via a point above
+                tx, ty, tz = map(float, c.split()[2:5]); cx, cy, cz = getattr(Robot(), g[1]).tip()
+                mid = f"goto {g[1]} {(cx + tx) / 2:.3f} {(cy + ty) / 2:.3f} {max(cz, tz) + 0.03:.3f}"
+                event("skill", f"{c}: straight line refused, going via {mid}")
+                o_ = rstep(mid) + "\n" + rstep(c)
+            out += o_ + "\n"
             if robot_errs(o_):
                 break
         ok, killed = bool(out.strip()), not out.strip()    # empty = the step was killed (stop / newer request)
