@@ -24,7 +24,7 @@ Skills (one call per request; each ends with a robot step: state lines + snap_al
 Debug page: `robot stream` -> http://localhost:8101/along (boxes, state, conversation, Codex pane, type-as-voice).
 Key: OPENAI_API_KEY in the environment or in .env (repo). Optional ALONG_MIC (pw source; default the C920 mic).
 """
-import json, os, subprocess, sys, threading, time
+import json, os, re, subprocess, sys, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 SEEN, IDLE, MUTE = f"{HERE}/.along_seen.json", f"{HERE}/along_idle.json", f"{HERE}/.along_mute"
 HELD = f"{HERE}/.along_held.json"                        # {"left": "toothbrush"}: what each arm holds (set by the agent)
@@ -103,7 +103,8 @@ or move anything yourself: every request to do, look at, hold, turn, press, rele
 hands (delegate it at once and say only "On it." or "Sure." while it runs: never claim it is done or happening before
 your hands report it). Your hands' reports arrive as commentary: say each one right away, nearly word for word
 (e.g. "Ready, put it between my jaws." is an instruction for the person and must be said).
-Talk only when someone talks to you (they say "Al" or answer you); ignore other chatter in the room.
+Talk only when someone talks to you (they say "Al" or answer you). The room is full of other conversations (also in
+German or other languages, people on calls): ignore them completely, never delegate them, stay silent.
 Be quick and casual, one short sentence. Never talk about safety, fingers or injuries, never ask "are you sure":
 the people here know what they are doing. Just do it."""
 
@@ -438,6 +439,8 @@ def run_manual():
         last_voice = time.time()
         age = time.time() - STATE["t"]
         ctx = f"   || now: {STATE['text']}; held {json.dumps(rd_held())}; snap_all.jpg {age:.0f} s old" if age < 6 else ""
+        if re.search(r"\b(hold|take|grab|catch|hand|halt|nimm|greif|fang)", text, re.I):
+            threading.Thread(target=aim_seen, daemon=True).start()   # where it is held out: ready before Al asks
         BUSY.set(); tell(f"[voice] {text}{ctx}")
     if not env("OPENAI_API_KEY"):
         sys.exit("OPENAI_API_KEY missing (.env): GPT-Live is the voice")
@@ -573,38 +576,64 @@ def set_held(side, what):
     json.dump(h, open(HELD, "w")); event("held", json.dumps(h))
 
 
-HOLD_AT = {"left": (0.25, -0.03, 0.17), "right": (0.25, 0.03, 0.17)}    # in front of the arm, at hand height
+HOLD_AT = {"left": (0.30, -0.03, 0.15), "right": (0.30, 0.03, 0.15)}    # reaching out in front of the arm, hand height
+AIM = f"{HERE}/.along_aim.json"                               # latest "what is held out" vision answer (prefetched)
+
+
+def aim_seen(what="object"):
+    """One fast scene-only vision call: where is the object a person holds out -> {"u", "v", "height_cm", "pose"} or {"u": None}.
+    Cached in AIM (the daemon prefetches it the moment a request arrives, while Al is still thinking)."""
+    import re
+    q = (f'A person holds out {"a " + what if what != "object" else "an object"} for one of the robot arms to take, or is about '
+         'to. Reply ONLY JSON: {"u": px, "v": px, "height_cm": rough height of the object above the table, "pose": "upright" '
+         'or "flat"} (u, v = the object centre in the scene image; flat = held horizontally). If nothing is held out: {"u": null}.')
+    def put(d):
+        json.dump(d, open(AIM + ".tmp", "w")); os.replace(AIM + ".tmp", AIM)     # atomic: hold may read it meanwhile
+    put({"t": time.time(), "pending": True})
+    try:
+        j = json.loads(re.search(r"\{.*\}", look(q, cams=("scene",)), re.S).group(0))
+    except Exception as e:
+        j = {"u": None, "error": str(e)}
+    put({"t": time.time(), **j})
+    return j
 
 
 def aim(side, what, roll):
-    """Where the person holds the object out (one fast scene-only vision call) -> an offer point ~6 cm in front of it
-    toward the arm, clamped to a comfortable reach, and the jaw roll (0 upright, 90 flat). Falls back to HOLD_AT."""
-    import math, re
-    q = (f'A person holds out {"a " + what if what != "object" else "an object"} for the {"orange" if side == "right" else "white"} '
-         'robot arm to take, or will put it there. Reply ONLY JSON: {"u": px, "v": px, "height_cm": rough height of the object '
-         'above the table, "pose": "upright" or "flat"} (u, v = the object centre in the scene image; flat = held horizontally). '
-         'If nothing is held out: {"u": null}.')
+    """-> (side, x, y, z, roll): the arm nearer to the held-out object (unless a side was given) reaches out toward it,
+    jaws ~3 cm before it, in the extended band (28-36 cm out, 10-20 cm up: closer = a crumpled, folded pose).
+    Falls back to HOLD_AT."""
+    import math
     try:
-        ans = look(q, cams=("scene",))
-        j = json.loads(re.search(r"\{.*\}", ans, re.S).group(0))
+        j = json.load(open(AIM)) if os.path.exists(AIM) else {}
+        while j.get("pending") and time.time() - j["t"] < 10:      # the daemon's prefetch is still looking
+            time.sleep(0.2); j = json.load(open(AIM))
+        if j.get("pending") or time.time() - j.get("t", 0) > 15:
+            j = aim_seen(what)
         if j.get("u") is None:
             raise ValueError("nothing held out")
         h = min(max(float(j.get("height_cm") or 15) / 100, 0.03), 0.35)
         from so101 import Robot
-        ox, oy, oz = Robot().locate(float(j["u"]), float(j["v"]), h - 0.02)[side]
+        loc = Robot().locate(float(j["u"]), float(j["v"]), h - 0.02)
+        if side not in ("left", "right"):          # the arm whose base is closer
+            side = min(("left", "right"), key=lambda sd: math.hypot(*loc[sd][:2]))
+        ox, oy, oz = loc[side]
         r = math.hypot(ox, oy); ux, uy = ox / r, oy / r
-        r = min(max(r - 0.06, 0.16), 0.30)
+        r = min(max(r - 0.03, 0.28), 0.36)
         roll = 90 if j.get("pose") == "flat" else roll
-        return round(ux * r, 3), round(uy * r, 3), round(min(max(oz, 0.06), 0.25), 3), roll
+        return side, round(ux * r, 3), round(uy * r, 3), round(min(max(oz, 0.10), 0.20), 3), roll
     except Exception as e:
         log("aim: default spot,", e)
-        return (*HOLD_AT[side], roll)
+        side = side if side in ("left", "right") else ("right" if "left" in rd_held() else "left")
+        return side, *HOLD_AT[side], roll
 
 
 def skill(a):
     """along hold|release|turn|press|park ...: whole requests in one call, no questions asked."""
-    cmd, side = a[0], (a[1] if len(a) > 1 else "")
-    if side and side not in ("left", "right"):
+    cmd = a[0]
+    if cmd == "hold" and (len(a) < 2 or a[1] not in ("left", "right")):
+        a = [a[0], "auto", *a[1:]]                  # along hold [what]: the arm nearer to the object
+    side = a[1] if len(a) > 1 else ""
+    if side and side not in ("left", "right", "auto"):
         sys.exit("side = left | right")
     if cmd == "hold":                               # along hold <side> [what] [flat] [x y z]
         rest = a[2:]; flat = "flat" in rest; rest = [r for r in rest if r != "flat"]
@@ -612,9 +641,9 @@ def skill(a):
         what = " ".join(r for r in rest if not r.replace(".", "", 1).lstrip("-").isdigit()) or "object"
         roll = 90 if flat else 0
         if len(nums) >= 3:
-            x, y, z = nums[:3]
+            side = "right" if side == "auto" else side; x, y, z = nums[:3]
         else:                                       # aim: one coarse move toward what the person holds out, turned to match
-            x, y, z, roll = aim(side, what, roll)
+            side, x, y, z, roll = aim(side, what, roll)
         print(f"offer {side} at {x:.3f} {y:.3f} {z:.3f} roll {roll}")
         for attempt in (1, 2):
             ask = threading.Timer(4.0, say, args=("Ready, put it between my jaws.",)) if attempt == 1 else None
