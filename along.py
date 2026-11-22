@@ -324,6 +324,7 @@ def interrupt_codex():
     BUSY.clear(); event("sys", "Codex interrupted (running turn and skills stopped)")
 
 
+PRESS_VEL = 20                                            # deg/s for the press going down (robotd default 45)
 RESET = f"{HERE}/.along_reset"                           # mtime = last "Reset Al": everything before it is forgotten
 
 
@@ -496,7 +497,8 @@ Actions:
 - release: side opens and goes back to ready (drops what it holds).
 - turn: wrist roll of side by deg (+/-; 90 = quarter turn). tilt: wrist flex by deg (+ tips down).
 - press: side's closed jaws go 5 cm above a point, a check looks whether they are right above it, then they push down
-  with full force and come back up. object = that point (u, v, height_cm, dist_cm); side = the arm that reaches it.
+  with full force and come back up. object = that point (u, v, height_cm, dist_cm): the middle of the part to push,
+  not its front edge; side = the arm that reaches it.
 - open: side's gripper opens (lets go), the arm stays. park: empty arms go to rest. reset: everything stops, both arms
   to rest.
 - stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").
@@ -734,8 +736,8 @@ def do_step(r, text, done, rest, last):
                     f"goto {side} {t[0]:.3f} {t[1]:.3f} {t[2]:.3f}"]
         else:                                             # first go above it; a check (fresh images) corrects, then this press
             cmds = [f"set {side}_gripper 0", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}"]
-            rest[:0] = [{"action": "check", "side": side, "what": f"{side} closed jaws right above {r.get('what') or 'the point'}"
-                         ", centered to press straight down (correct with a nudge or goto if not)"}, r]
+            rest[:0] = [{"action": "check", "side": side, "what": f"{side} closed jaws right above the middle of "
+                         f"{r.get('what') or 'the point'} (not its front edge), to press straight down (correct with a nudge or goto if not)"}, r]
             speak = ""                                    # nothing to say yet: the press itself follows
         args = None
     elif a == "open":
@@ -761,7 +763,14 @@ def do_step(r, text, done, rest, last):
             if c.startswith("wait "):                     # press: keep pushing at the bottom
                 time.sleep(float(c.split()[1])); continue
             if c.startswith("push "):                     # press down: stopped by the object = pressed (not an error)
-                out += re.sub(r"^ERR\s", "stopped by the object: ", rstep(c[5:]), flags=re.M) + "\n"; continue
+                from so101 import Robot
+                bot = Robot(); v0 = bot.state()["vel"]
+                try:                                      # slow on the way down; the servos' push is just as strong
+                    bot.call(f"speed {PRESS_VEL}")
+                    out += re.sub(r"^ERR\s", "stopped by the object: ", rstep(c[5:]), flags=re.M) + "\n"
+                finally:
+                    bot.call(f"speed {v0}")
+                continue
             o_ = rstep(c); out += o_ + "\n"
             if robot_errs(o_):
                 break
