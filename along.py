@@ -519,6 +519,7 @@ STEP_SCHEMA = {"type": "object", "additionalProperties": False,
 ROUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["actions"],
                 "properties": {"actions": {"type": "array", "items": STEP_SCHEMA}}}
 
+MAX_FAILS = 3                                               # failed steps per request; then the model only talks
 RUN = {"p": None, "what": ""}                               # the skill process the router started (stop kills it)
 PLAN = {"gen": 0}                                           # bumped by every new plan: an older sequence stops at its next step
 
@@ -548,8 +549,9 @@ def recent():
     return conv, "\n".join(acts[-10:])
 
 
-def route(text):
-    """One gpt-6.1-sol ultrafast call: transcript + state + 3 images -> {actions: [{action, params, object, say, codex_prompt}]}."""
+def route(text, failed=None, final=False):
+    """One gpt-6.1-sol ultrafast call: transcript + state + 3 images -> {actions: [{action, params, object, say, codex_prompt}]}.
+    failed = what went wrong with the last plan for this request: the model decides what now (retry, ask, answer)."""
     t0 = time.time()
     run = f"running now: {RUN['what']}" if RUN["p"] and RUN["p"].poll() is None else "nothing running"
     conv, acts = recent(); cx = codex_agent.state()
@@ -558,6 +560,10 @@ def route(text):
            f"{'; its last task: ' + cx['last']['task'][:200] + ' -> ' + repr(cx['last']['reply'][:120]) if cx['last'] else ''}."
            f"\n\nRecent conversation:\n{conv}\n\nRecent activity (router = you, tell = task sent to Codex, codex = its "
            f"commands and turns):\n{acts}")
+    if failed:
+        ctx += (f"\n\nWhat you planned for this request failed: {failed}\n" + (
+            "Return what to tell the person now: answer (why), or ask (if they can help)." if final else
+            "Return what to do now: a corrected retry, ask (if the person can help), or answer (tell them why)."))
     out, _ = llm.call("route", [ctx] + frames(), instructions=ROUTE_PROMPT, schema=ROUTE_SCHEMA, timeout=30)
     event("route", f"({time.time() - t0:.1f} s) " + json.dumps({k: v for k, v in out.items() if v not in (None, "")}))
     return out
@@ -583,13 +589,25 @@ def act(plan, text, answered=False):
         interrupt_codex()                                   # a new request replaces whatever runs
 
     def go():
-        BUSY.set(); done = []
+        BUSY.set(); done, todo, fails = [], list(steps), 0
         try:
-            for i, st in enumerate(steps):
+            while todo:
                 if PLAN["gen"] != gen:
-                    return event("sys", f"plan replaced by a newer request after {len(done)} of {len(steps)} steps")
-                if not do_step(st, text, done, steps[i + 1:], i == len(steps) - 1):
+                    return event("sys", f"plan replaced by a newer request after {len(done)} steps")
+                st = todo.pop(0)
+                r = do_step(st, text, done, todo, not todo)
+                if r is True:
+                    continue
+                if not r:
                     return
+                fails += 1; final = fails >= MAX_FAILS             # failed: the model sees why and decides what now
+                event("sys", f"step failed ({fails}): {r[:300]}")
+                STATE.update(text=brief_state(rstep()), t=time.time())
+                ran = f" (steps before it that worked: {'; '.join(done)})" if done else ""
+                new = route(text, failed=r + ran, final=final)["actions"]
+                todo = [x for x in new if x["action"] != "none" and (not final or x["action"] in ("answer", "ask"))]
+        except Exception as e:
+            log("plan failed", e); event("error", f"plan: {e}")
         finally:
             if PLAN["gen"] == gen:
                 BUSY.clear()
@@ -597,7 +615,8 @@ def act(plan, text, answered=False):
 
 
 def do_step(r, text, done, rest, last):
-    """One plan step, blocking. True = go on with the next step. done: what earlier steps did (for Codex)."""
+    """One plan step, blocking. True = go on with the next step, False = stop (stopped / asked the person), a string =
+    it failed (why, for the model to decide what now). done: what earlier steps did (for Codex)."""
     a, side, say_done = r["action"], r.get("side") or "auto", (r.get("say") or "").strip()
     speak = say_done or ("Done." if last else "")
 
@@ -631,7 +650,7 @@ def do_step(r, text, done, rest, last):
         args = [a, side] + ([str(r.get("deg") or 90)] if a != "release" else [])
     elif a == "press":
         if not o:
-            say("Where should I press?"); return False
+            return "press needs object = the point to press (scene pixel + height)"
         from so101 import Robot
         h = (o.get("height_cm") or 0) / 100 - 0.02
         loc = Robot().locate(o["u"], o["v"], h)
@@ -642,7 +661,7 @@ def do_step(r, text, done, rest, last):
     elif a == "step":
         cmds = [c.strip() for c in (r.get("step") or "").split(";") if c.strip()]
         if not cmds or any(c.split()[0] not in ("goto", "move", "set", "recall", "nudge") for c in cmds):
-            say("Hm, I can't do that one."); return False
+            return f"step '{r.get('step')}': only goto, move, set, recall, nudge"
         args = None
     else:
         return True
@@ -662,15 +681,14 @@ def do_step(r, text, done, rest, last):
     errs = robot_errs(out)
     if errs:                                              # refused by robotd: never "Done."
         event("skill", "refused: " + "; ".join(errs)[:240])
-        say("I can't do that one."); return False
+        return f"`{what}` was refused by the robot: {'; '.join(errs)[:300]}"
     event("skill", ("done: " if ok else "failed: ") + " ".join(out.split())[-240:])
     if a == "hold":
         if re.search(r"""['"]holding['"]: (True|true)""", out):
             say(say_done or "Got it."); done.append(f"{what}: holding it"); return True
-        say("Robot error." if "FAILED" in out else "Missed it."); return False
-    if not ok:                                            # a skill may name the reason for the person: "SAY: ..."
-        m = re.search(r"^SAY: (.+)$", out, re.M)
-        say(m.group(1).strip() if m else "That didn't work."); return False
+        return f"`{what}` did not end up holding it: {' '.join(out.split())[-300:]}"
+    if not ok:
+        return f"`{what}` failed: {' '.join(out.split())[-300:]}"
     if speak:
         say(speak)
     done.append(f"{what}: done"); return True
@@ -947,7 +965,6 @@ def skill(a):
         x, y, z = map(float, a[2:5]); depth = float(a[5]) / 100 if len(a) > 5 else 0.04
         rx, ry, rz = reachable(side, x, y, z + 0.04, drop=0.03)       # approach >= 1 cm above the point
         if abs(rx - x) + abs(ry - y) > 0.03:                           # beyond the arm: not beside it
-            print("SAY: That's out of my reach. Can you bring it closer?")
             sys.exit(f"press {side} FAILED: {x:.2f}/{y:+.2f}/{z:.2f} is out of the {side} arm's reach")
         if rz < z + 0.04:
             event("skill", f"press: {x:.2f}/{y:+.2f}/{z:.2f} past the arm's reach, pressing at {rx:.2f}/{ry:+.2f} from {rz:.2f}")
