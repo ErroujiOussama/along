@@ -839,7 +839,7 @@ def run_plan(steps, text, rid, gen, cli=False):
             continue
         new = replan("fail", f"Step failed{' in skill:' + where if where else ''}: {summary([st])} "
                      f"{json.dumps({k: v for k, v in st.items() if v not in (None, '')})}\nWhy: {info}\n"
-                     f"Return what to do now: a corrected retry, or a say.")
+                     f"Return what to do now: a corrected retry, or a say that asks the person to help.")
         if new is None:
             say("Hm, I'm stuck on this one."); return False
         if cli and any(s["action"] == "codex" for s in new):
