@@ -217,14 +217,14 @@ def control_loop():
                         log(f"reconnect failed: {str(e).strip().splitlines()[0][:120]}")
             time.sleep(period); next_t = time.perf_counter()
             continue
-        fails_before = fails
+        fails_before, fails = fails, 0   # a good read: the bus is back (recover once, not every cycle)
         with lock:
             measured = m
             if n % 5 == 0:   # 10 Hz joint history for the rollout inspector (`traj`)
                 traj.append((round(time.time(), 2), [round(m[k], 1) for k in KEYS]))
-            if fails >= 10:   # bus was gone (e.g. power cut): never jump to old targets, hold here
+            if fails_before >= 10:   # bus was gone (e.g. power cut): never jump to old targets, hold here
                 plan.clear(); target.update(m); command.update(m); offset.update({k: 0.0 for k in KEYS})
-                log(f"bus back after {fails} failed reads: holding current pose (targets reset)")
+                log(f"bus back after {fails_before} failed reads: holding current pose (targets reset)")
             reqs = list(torque_req); torque_req.clear()
             for side, on in reqs:   # torque change: hold exactly where the arm is
                 for k in KEYS:
