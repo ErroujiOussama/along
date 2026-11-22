@@ -1058,7 +1058,7 @@ def do_step(r, text, done, last, cli=False):
         return True, None
     what = "along " + " ".join(args) if args else "robot step " + "; ".join(cmds)
     if args is None:
-        RUN.update(p=None, what="step"); out = ""
+        RUN.update(p=None, what="step"); out, clamped = "", []
         for c in cmds:                                    # one robot step each: a ';' chain sums into one target
             g = c.split()
             src, c0 = (g[2] if g[0] == "goto" and len(g) == 6 else "xyz"), c
@@ -1084,7 +1084,12 @@ def do_step(r, text, done, last, cli=False):
                 if far > 0.04 or off > 0.04 and far > 0:  # far out of reach: decided here, not by the model
                     return out_of_reach(g[1], x, y, z, f"{c} is {max(far, off) * 100:.0f} cm past the {g[1]} arm's reach", say, cli)
                 if 0.005 < off <= 0.04:
+                    from so101 import Robot
+                    tip = getattr(Robot(), g[1]).tip()
+                    if sum((a - b) ** 2 for a, b in zip(tip, (rx, ry, rz))) ** 0.5 < 0.02:   # already at the limit: can't get closer
+                        return out_of_reach(g[1], x, y, z, f"{c}: the {g[1]} arm is already at its limit", say, cli)
                     c = f"goto {g[1]} {rx:.3f} {ry:.3f} {rz:.3f}"; event("skill", f"{' '.join(g)} is past the arm's reach: {c}")
+                    clamped.append(f"{' '.join(g)} was past the arm's reach: it stopped at its limit {rx:.2f} {ry:+.2f} {rz:.2f}")
             o_ = rstep(c)
             if g[0] == "goto" and len(g) == 5 and any("ik fails at waypoint" in e for e in robot_errs(o_)):
                 from so101 import Robot                   # the straight line flips the wrist: go via a point above
@@ -1119,7 +1124,7 @@ def do_step(r, text, done, last, cli=False):
         return False, f"`{what}` failed: " + " ".join(out.split())[-300:]
     if speak:
         say(speak)
-    done.append(f"{what}: done"); return True, None
+    done.append(f"{what}: done" + (f" ({'; '.join(clamped)})" if args is None and clamped else "")); return True, None
 
 
 def run_manual():
