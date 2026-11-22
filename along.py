@@ -565,7 +565,7 @@ ROUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["e
 
 RUN = {"p": None, "what": ""}                               # the skill process the router started (stop kills it)
 PLAN = {"gen": 0}                                           # bumped by every new plan: an older sequence stops at its next step
-MAX_TURNS, MAX_DEPTH = 5, 3
+MAX_TURNS, MAX_DEPTH, MAX_FAILS = 12, 3, 5
 HEARD = {"t": 0.0}                                           # when the last request was heard                                 # model turns per request; skills inside skills
 EP_STALE = 600                                               # s: an episode nobody touched for this long is closed
 EP = {"id": None, "request": "", "status": "", "codex": False, "skills": []}   # the episode: one goal until confirmed/dropped
@@ -743,7 +743,7 @@ def run_plan(steps, text, rid, gen, cli=False):
     """Execute steps as a stack of frames (the request, then one per expanded skill). skill / check / a failed step =
     a new model turn in the same conversation. cli = `along skill` (run by Codex): a codex step ends it with exit 1.
     Returns True when everything ran."""
-    stack, done, turns, codex_ran = [{"skill": None, "steps": list(steps), "failed": False}], [], 0, False
+    stack, done, turns, codex_ran, fails = [{"skill": None, "steps": list(steps), "failed": False}], [], 0, False, 0
 
     def replan(kind, msg):
         nonlocal rid, turns
@@ -752,11 +752,7 @@ def run_plan(steps, text, rid, gen, cli=False):
             for f in stack:
                 if f["skill"] and not f["failed"]:
                     f["failed"] = True; skills_record(f["skill"], "fail")
-            if cli or turns > MAX_TURNS + 1:
-                event("sys", f"{MAX_TURNS} model turns for one request: giving up"); return None
-            event("sys", f"{MAX_TURNS} fast turns did not finish it: handing to Codex")
-            return [{"action": "codex", "side": "auto", "say": "", "codex_fresh": True,
-                     "codex_prompt": f"Finish this request: {text}. The fast path tried: {'; '.join(done) or 'nothing'}."}]
+            event("sys", f"{MAX_TURNS} model turns for one request: giving up"); return None
         t0 = time.time()
         new, rid = turn(kind, f"{msg}\n\nDone so far: {'; '.join(done) or 'nothing'}.", rid)
         if new and HEARD["t"] > t0:                       # the person spoke meanwhile: that request answers itself,
@@ -819,6 +815,17 @@ def run_plan(steps, text, rid, gen, cli=False):
         if info is None or PLAN["gen"] != gen:            # stopped / replaced: say nothing more
             return False
         event("skill", f"failed{' in skill:' + where if where else ''}: {info[:240]}")
+        fails += 1
+        if fails >= MAX_FAILS and not cli:                # the fast path tried enough: Codex takes over
+            event("sys", f"{fails} failed attempts: handing to Codex")
+            for f in stack[1:]:
+                f["steps"] = []
+                if f["skill"] and not f["failed"]:
+                    f["failed"] = True; skills_record(f["skill"], "fail")
+            stack[0]["steps"] = [{"action": "codex", "side": st.get("side") or "auto", "say": "", "codex_fresh": True,
+                            "codex_prompt": f"Finish this request: {text}. The fast path failed {fails} times; last: {info[:300]}. "
+                                            f"Done so far: {'; '.join(done) or 'nothing'}."}]
+            continue
         new = replan("fail", f"Step failed{' in skill:' + where if where else ''}: {summary([st])} "
                      f"{json.dumps({k: v for k, v in st.items() if v not in (None, '')})}\nWhy: {info}\n"
                      f"Return what to do now: a corrected retry, or a say.")
