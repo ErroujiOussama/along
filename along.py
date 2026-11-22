@@ -729,7 +729,7 @@ def do_step(r, text, done, rest, last):
         x, y, z = pixel_xyz(side, o["u"], o["v"], o["height_cm"])   # the top's height places it; aims at the table:
         # the largest position error = the servos' full force on the top, held 1.5 s
         cmds = [f"set {side}_gripper 0", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}",
-                f"goto {side} {x:.3f} {y:.3f} 0.0", "wait 1.5", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}"]
+                f"push goto {side} {x:.3f} {y:.3f} 0.0", "wait 1.5", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}"]
         args = None
     elif a == "open":
         args = [a] + ([side] if side in ("left", "right") else [])
@@ -753,6 +753,8 @@ def do_step(r, text, done, rest, last):
         for c in cmds:                                    # one robot step each: a ';' chain sums into one target
             if c.startswith("wait "):                     # press: keep pushing at the bottom
                 time.sleep(float(c.split()[1])); continue
+            if c.startswith("push "):                     # press down: stopped by the object = pressed (not an error)
+                out += re.sub(r"^ERR\s", "stopped by the object: ", rstep(c[5:]), flags=re.M) + "\n"; continue
             o_ = rstep(c); out += o_ + "\n"
             if robot_errs(o_):
                 break
