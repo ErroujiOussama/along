@@ -5,7 +5,7 @@ Two SO-101 arms you talk to. Say what you need ("hold this toothbrush", "turn it
 
 [![Demo: soap, toothbrush, toothpaste (2 min)](docs/along-demo.jpg)](https://github.com/jreiml/along/releases/download/demo/along-demo.mp4)
 
-▶ [Watch the demo](https://github.com/jreiml/along/releases/download/demo/along-demo.mp4): press a soap dispenser, hold a toothbrush and toothpaste, turn the brush, hand it back.
+▶ [Watch the demo](https://www.youtube.com/watch?v=-Gc9LTbTNV4): press a soap dispenser, hold a toothbrush and toothpaste, turn the brush, hand it back.
 
 ## How it works
 
