@@ -131,25 +131,6 @@ Commentary is your hands' report: say it word for word. It is the only thing you
 Small talk (hi, thanks): one short sentence. Anything not meant for you: stay silent. Never talk about safety."""
 
 
-CLAIM = re.compile(r"\b(pressed|pushed|grabbed|picked up|placed|released|dropped|lifted|poured|handed)\b", re.I)
-
-
-def invented(text):
-    """GPT-Live sometimes makes up a result ("Pressed the pump.") before the arms did anything. Anything it says that
-    claims an action and is not a report we sent in the last 20 s gets a spoken correction at once."""
-    t = " ".join(text.split())
-    if not CLAIM.search(t):
-        return
-    try:
-        recent = [json.loads(l) for l in open(EVENTS).readlines()[-40:] if l.strip()]
-    except FileNotFoundError:
-        recent = []
-    if any(e["kind"] == "say" and time.time() - e["t"] < 20 for e in recent):   # it is (re)phrasing a report: fine
-        return
-    event("sys", f"GPT-Live invented a result: {t[:160]}")
-    say("Sorry, scratch that: nothing has happened yet. I'm on it.")
-
-
 def mic_source():
     return env("ALONG_MIC") or next((l.split()[1] for l in subprocess.run(["pactl", "list", "short", "sources"],
            capture_output=True, text=True).stdout.splitlines() if "C920" in l and "input" in l), None)
@@ -312,7 +293,7 @@ class LiveVoice:
                     if self.phase == "muted":
                         self.phase = "listening"
                 if said.strip() and time.time() - self.said_t > 1.2 and time.time() > self.speak_until + 0.3:
-                    event("live", " ".join(said.split())); invented(said); said = ""   # one line per reply (deltas word by word)
+                    event("live", " ".join(said.split())); said = ""      # one line per reply (deltas come word by word)
         finally:
             stop.set()
             try:
@@ -536,7 +517,8 @@ Actions:
   a turn with new images and return the corrected / remaining steps. Use it where precision matters, before the risky step.
 - skill: a learned skill (list below): skill = its name, args = the values its args line asks for (free text). You
   then get a turn with its SKILL.md and return its concrete steps.
-- answer: only talk: questions about the scene, the arms. say = the answer. Greetings, thanks and small talk: say = ""
+- answer: only talk: questions about the scene, the arms. say = the answer. Greetings, thanks and small talk: a short reply,
+  or "" if Al's last line in the conversation already answered it ("On it." is not an answer)
   (the voice model already answers those itself; saying it again doubles it).
 - codex: anything multi-step, a grasp of something on the table, or a task none of the above covers: codex_prompt = a
   self-contained instruction for the slower agent with all you know (object, where it is in px, which arm).
@@ -551,7 +533,7 @@ correct it in say when it told the person something wrong.
 
 episode = how the request relates to the open episode (the goal being worked on, given in the context): "new" (a new
 goal, or none is open), "continue" (same goal: retry, a correction, "now the other arm"), "confirm" (the person says it
-worked: "yes", "perfect", "thanks, that worked"; say "": the voice model answers thanks and small talk itself), "deny" (it didn't: "no", "you missed"; then
+worked: "yes", "perfect", "thanks, that worked"), "deny" (it didn't: "no", "you missed"; then
 fix it, usually codex continuing), "none" (chatter, questions, small talk). In later turns of the conversation: "continue".
 
 say = what Al says when that step is done: ONE short sentence ("Done.", "Here you go.", an answer of at most ~12 words), or
