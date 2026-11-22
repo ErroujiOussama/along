@@ -498,7 +498,8 @@ Actions:
 - turn: wrist roll of side by deg (+/-; 90 = quarter turn). tilt: wrist flex by deg (+ tips down).
 - press: side's closed jaws go 5 cm above a point, a check looks whether they are right above it, then they push down
   with full force and come back up. object = that point (u, v, height_cm, dist_cm): the middle of the part to push,
-  not its front edge; side = the arm that reaches it.
+  not its front edge; height_cm = the height of its top: judge it against the tip markers (their z is printed);
+  side = the arm that reaches it.
 - open: side's gripper opens (lets go), the arm stays. park: empty arms go to rest. reset: everything stops, both arms
   to rest.
 - stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").

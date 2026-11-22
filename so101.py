@@ -382,7 +382,8 @@ class Robot:
                 prev = cur
                 entered = entered or d_base > enter
                 still = still + 1 if entered and d_base > stay and d_prev < 9 else 0   # a hand still holding it jitters
-                if still >= frames:                # something new between the jaws, held about still
+                if still >= frames or (confirm and not asked):   # something new, held about still (with confirm: also
+                                                   # one look right when the jaws are open: it may already be there)
                     if not confirm:
                         break
                     if time.time() - ask_t > 1.5:  # the model looks: is it really in the jaws?
