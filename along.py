@@ -1044,6 +1044,8 @@ def skill(a):
             event("skill", f"hold {side}: {'holding' if r.get('holding') else 'missed'} {json.dumps(r)[:200]}")
             if r.get("holding"):
                 set_held(side, what); break
+            if not r.get("tries"):                  # 10 s and nothing came: back to the model (no "missed")
+                sys.exit(f"hold {side}: nothing was put between the jaws within {r.get('waited_s')} s; the arm waits there, jaws open")
             if attempt == 1:
                 say_bg("Missed it, once more.")
         print(f"hold {side}: {r}"); print(rstep())

@@ -356,7 +356,7 @@ class Robot:
         q = best[0].copy(); q[4] += roll
         return {f"{side}_{j}": round(float(v), 2) for j, v in zip(collide.J, q)}, round(best[1], 4)
 
-    def offer(self, side, x, y, z, roll=0.0, open_pct=45, timeout=90.0, confirm=None):
+    def offer(self, side, x, y, z, roll=0.0, open_pct=45, timeout=10.0, confirm=None):
         """Human hand-over: move the gripper to (x, y, z) m (this arm's base frame), pointing horizontally at the person,
         jaws open, then wait until something is placed between the jaws and stays still, close, and check HOLDING.
         A false trigger (closed on nothing) reopens and waits again. confirm(wrist image) -> bool (e.g. a vision model):

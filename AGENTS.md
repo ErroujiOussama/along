@@ -43,7 +43,7 @@ Lift slowly, then confirm in snap_all.jpg that it is clear of the table.
 (`robot locate`), then `robot offer <side> x y z [roll]` with a point ~5–8 cm in front of the object, toward the arm.
 The gripper goes there pointing at the person, jaws open, turned to match the object (roll 0 = jaws left/right, for an
 upright object; 90 = jaws up/down, for a horizontal one). The person puts the object in; offer closes when it sits still
-between the jaws and reports `holding` (it reopens and waits again after a miss). Waits up to 90 s.
+between the jaws and reports `holding` (it reopens and waits again after a miss). Waits up to 10 s.
 
 **Pace:** this is a workshop prototype run by trained people who watch the arms; robotd already ramps speed and clamps joint ranges.
 Think first, then act decisively; do not ask for permission or reassurance, and never ask people to rearrange things: move the robot instead.
