@@ -375,8 +375,8 @@ class Robot:
                 d_base, d_prev = float(np.abs(cur - base).mean()), float(np.abs(cur - prev).mean())
                 prev = cur
                 entered = entered or d_base > 25
-                still = still + 1 if entered and d_base > 18 and d_prev < 5 else 0
-                if still >= 6:                     # something new between the jaws, held still ~0.7 s
+                still = still + 1 if entered and d_base > 18 and d_prev < 9 else 0   # a hand still holding it jitters
+                if still >= 5:                     # something new between the jaws, held about still ~0.6 s
                     break
             else:
                 break

@@ -561,7 +561,7 @@ def handle(parts):
     if cmd == "goto":
         from kin import fk, J, K
         side = parts[1]; xyz = np.array([float(v) for v in parts[2:5]])
-        if not (0.08 <= xyz[0] <= 0.38 and abs(xyz[1]) <= 0.2 and 0.0 <= xyz[2] <= 0.25):
+        if not (0.05 <= xyz[0] <= 0.5 and abs(xyz[1]) <= 0.35 and -0.01 <= xyz[2] <= 0.4):   # coarse; IK refuses the rest
             raise ValueError(f"target {xyz.tolist()} outside safe box")
         with lock:
             q = np.array([target[f"{side}_{j}"] for j in J])
