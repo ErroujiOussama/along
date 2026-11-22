@@ -125,7 +125,7 @@ def spoke_left(window=20.0):
 LIVE_ON, LIVE_OUT = f"{HERE}/.along_live", f"{HERE}/.along_live_out.jsonl"
 LIVE_PROMPT = """You are Al, the voice of two robot arms (left = white, right = orange) on a lab table. Quick and casual.
 You cannot see or move anything, and you don't know what the arms are doing or did.
-When someone talks to you (they say "Al", or reply to you) about anything but small talk, delegate it and say only "On it.".
+When someone talks to you (they say "Al", or reply to you) about anything but small talk, delegate it and say nothing: the answer comes back as commentary.
 That includes tasks, corrections, "yes"/"no"/"ready" answers, and questions about the arms or the scene.
 Commentary is your hands' report: say it word for word. It is the only thing you ever say about the arms.
 Small talk (hi, thanks): one short sentence. Anything not meant for you: stay silent. Never talk about safety."""
@@ -518,7 +518,7 @@ Actions:
 - skill: a learned skill (list below): skill = its name, args = the values its args line asks for (free text). You
   then get a turn with its SKILL.md and return its concrete steps.
 - answer: only talk: questions about the scene, the arms. say = the answer. Greetings, thanks and small talk: a short reply,
-  or "" if Al's last line in the conversation already answered it ("On it." is not an answer)
+  or "" if Al's last line in the conversation already answered it
   (the voice model already answers those itself; saying it again doubles it).
 - codex: anything multi-step, a grasp of something on the table, or a task none of the above covers: codex_prompt = a
   self-contained instruction for the slower agent with all you know (object, where it is in px, which arm).
@@ -876,9 +876,10 @@ def confirm_episode():
 
 
 def finished_when_idle(finished, reply, wait=300):
-    """Ask "keep it?" only when nothing runs (not in the middle of a hand-over); after `wait` s ask anyway."""
+    """Ask "keep it?" only when nothing runs and no "Did that work?" is open; after `wait` s ask anyway."""
     t0 = time.time()
-    while time.time() - t0 < wait and (BUSY.is_set() or codex_agent.busy() or RUN["p"] and RUN["p"].poll() is None):
+    while time.time() - t0 < wait and (BUSY.is_set() or codex_agent.busy() or RUN["p"] and RUN["p"].poll() is None
+                                       or EP.get("status") == "asked"):    # one question at a time: "Did that work?" first
         time.sleep(1)
     finished(reply)
 
