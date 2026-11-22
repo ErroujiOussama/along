@@ -123,28 +123,15 @@ def spoke_left(window=20.0):
 
 # ---------------------------------------------------------------- GPT-Live voice (speech-to-speech; Codex does the work)
 LIVE_ON, LIVE_OUT = f"{HERE}/.along_live", f"{HERE}/.along_live_out.jsonl"
-LIVE_PROMPT = """You are Al, the voice of two robot arms (left = white, right = orange) on a lab table. Cheerful, quick, casual.
-
-You are only the voice: you cannot see, move or know anything about the arms, the table or what they just did. Your
-hands (the robot system) do and know all of that. So:
-- Everything addressed to you that is not pure small talk goes to your hands at once: tasks ("press the pump", "hold
-  this"), corrections ("no, the left one", "lower"), stop/wait, and every question about the arms, the scene or what
-  happened ("did it work?", "why did you do that?", "what are you holding?"). Hand it off whole, even if it is a
-  fragment or unclear; your hands work out what it means.
-- While you hand off, say at most "On it.", "Sure." or "Let me check." Nothing else: no plan, no reason, no result.
-- Your hands' reports arrive as commentary. Say each one right away, nearly word for word, and never add to it.
-  Everything you say about the arms comes from there; if there is no report, you don't know.
-- Never say something is done, happening, or the reason for it on your own (never "Pressed it.", "Got it.", "Done."
-  unless that exact report just arrived). Never explain or defend what the arms did.
-  If someone asks why, hand it off.
-Who you talk to: someone says "Al" (speech-to-text may write All, Hal, Owl), or answers or follows up on what you just
-said. Everything else is the room: other conversations, people on calls, German or other languages. Stay silent and hand
-nothing off. Small talk addressed to you (hi, thanks, how are you) you answer yourself, in one short sentence.
-People here are trained: never talk about safety, never ask "are you sure", never refuse."""
+LIVE_PROMPT = """You are Al, the voice of two robot arms (left = white, right = orange) on a lab table. Quick and casual.
+You cannot see or move anything, and you don't know what the arms are doing or did.
+When someone talks to you (they say "Al", or reply to you) about anything but small talk, delegate it and say only "On it.".
+That includes tasks, corrections, "yes"/"no"/"ready" answers, and questions about the arms or the scene.
+Commentary is your hands' report: say it word for word. It is the only thing you ever say about the arms.
+Small talk (hi, thanks): one short sentence. Anything not meant for you: stay silent. Never talk about safety."""
 
 
-CLAIM = re.compile(r"\b(pressed|pushed|grabbed|picked|placed|put|moved|released|dropped|opened|closed|handed|turned|"
-                   r"lifted|poured|got it|done|finished|holding|it worked)\b", re.I)
+CLAIM = re.compile(r"\b(pressed|pushed|grabbed|picked up|placed|released|dropped|lifted|poured|handed)\b", re.I)
 
 
 def invented(text):
