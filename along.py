@@ -1141,6 +1141,8 @@ def do_step(r, text, done, last, cli=False):
         if re.search(r"""['"]holding['"]: (True|true)""", out):
             say(say_done or "Got it."); done.append(f"{what}: holding it"); return True, None
         return False, f"`{what}`: {'robot error' if 'FAILED' in out else 'missed (nothing between the jaws)'}: " + " ".join(out.split())[-200:]
+    if not ok and a == "press" and re.search(r"out of (the \w+ arm's )?reach", out) and not cli:
+        say("That's out of my reach. Can you bring it closer?"); return False, None
     if not ok:
         return False, f"`{what}` failed: " + " ".join(out.split())[-300:]
     if speak:
@@ -1421,17 +1423,14 @@ def skill(a):
         rx, ry, rz = reachable(side, x, y, z + 0.04, drop=0.03)       # approach >= 1 cm above the point
         if rx == float("inf"):
             sys.exit(f"press {side} FAILED: {x:.2f}/{y:+.2f}/{z:.2f} is out of the {side} arm's reach")
-        far = abs(rx - x) + abs(ry - y) > 0.03                         # beyond the arm (often: held out too far)
-        if far or rz < z + 0.04:
-            event("skill", f"press: {x:.2f}/{y:+.2f}/{z:.2f} past the arm's reach, pressing at {rx:.2f}/{ry:+.2f} from {rz:.2f}")
+        if ((rx - x) ** 2 + (ry - y) ** 2) ** 0.5 > 0.015:            # it would press beside the point: don't
+            sys.exit(f"press {side} FAILED: {x:.2f}/{y:+.2f}/{z:.2f} is out of the {side} arm's reach")
         from so101 import Robot
         tip = getattr(Robot(), side).tip()
         near = sum((a - b) ** 2 for a, b in zip(tip, (rx, ry, rz))) ** 0.5 < 0.02   # already there: a goto < 2 cm is refused
         o = rstep(f"set {side}_gripper 0" + ("" if near else f"; goto {side} {rx:.3f} {ry:.3f} {rz:.3f}")); print(o)
         if robot_errs(o):
             sys.exit(f"press {side} FAILED: {'; '.join(robot_errs(o))}")
-        if far:                                     # a moment at our limit: the person can bring it under the gripper
-            time.sleep(2.0)
         o = rstep(f"goto {side} {rx:.3f} {ry:.3f} {max(z - depth, 0.0):.3f}")   # aims below the surface: the servos push
         bad = [e for e in robot_errs(o) if err_kind(e) != "blocked"]           # stopping short = contact: the press itself
         print(re.sub(r"^ERR .*tip ended.*$", "", o, flags=re.M))
