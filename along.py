@@ -146,9 +146,7 @@ class LiveVoice:
                                additional_headers={"Authorization": f"Bearer {env('OPENAI_API_KEY')}"})
         self.send(type="session.start", session={"model": env("ALONG_LIVE_MODEL", "gpt-live-1.1"), "instructions": LIVE_PROMPT,
                   "audio": {"format": {"type": "audio/pcm", "rate": self.RATE}, "output": {"voice": env("ALONG_LIVE_VOICE", "marin")}},
-                  "delegation": {"type": "client"},
-                  "input": [{"type": "message", "role": "developer", "content": [{"type": "input_text",
-                             "text": "Greet them now in a few words: you are Al and can lend a hand."}]}]})
+                  "delegation": {"type": "client"}})   # no greeting: Al stays quiet until someone talks
         open(LIVE_ON, "w").write(str(os.getpid())); open(LIVE_OUT, "w").close()
         fmt = ["--raw", "--rate", str(self.RATE), "--channels", "1", "--format", "s16"]
         src = mic_source()
