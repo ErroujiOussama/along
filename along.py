@@ -946,10 +946,8 @@ def skill(a):
             ask and ask.start()                     # only if it is not already in there (offer closes once it sits still)
             o = subprocess.run(["robot", "offer", side, f"{x:.3f}", f"{y:.3f}", f"{z:.3f}", str(roll)], capture_output=True, text=True)
             ask and ask.cancel()
-            if "unreachable" in (o.stderr + o.stdout) and (x, y, z) != HOLD_AT[side]:
-                x, y, z = HOLD_AT[side]                 # aimed out of reach: the default spot instead
-                event("skill", "hold: aimed point out of reach, default spot instead")
-                o = subprocess.run(["robot", "offer", side, *map(str, HOLD_AT[side]), str(roll)], capture_output=True, text=True)
+            if "unreachable" in (o.stderr + o.stdout):   # back to the model (retry, ask, or say why)
+                sys.exit(f"hold {side} FAILED at {x:.2f}/{y:+.2f}/{z:.2f}: {(o.stderr or o.stdout).strip()[-200:]}")
             try:
                 r = json.loads(o.stdout)
             except ValueError:                      # robotd down etc.: not a miss, say what broke
