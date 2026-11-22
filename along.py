@@ -240,6 +240,11 @@ class LiveVoice:
 
 # ---------------------------------------------------------------- codex bridge
 def tmux(*a, **k):
+    """tmux on the default server. Session targets are exact ("=along"): plain "along" would also match "along-spare"."""
+    a = list(a)
+    if "-t" in a:
+        i = a.index("-t") + 1
+        a[i] = f"={a[i]}" + (":" if a[0] in ("send-keys", "capture-pane") else "")
     return subprocess.run(["tmux", "-L", "default", *a], capture_output=True, text=True, **k)   # the default server, wherever along runs from
 
 
@@ -609,8 +614,8 @@ def act(r, text):
         if r.get("codex_fresh"):
             event("sys", "router: fresh Codex context for this task"); codex_fresh()
         age = time.time() - STATE["t"]
-        BUSY.set(); return tell(f"[task] {r.get('codex_prompt') or text}   || heard: {text}; now: {STATE['text']}; "
-                                f"held {json.dumps(rd_held())}; snap_all.jpg {age:.0f} s old")
+        now = f"now: {STATE['text']}; snap_all.jpg {age:.0f} s old" if age < 30 else "arm state: run robot step"
+        BUSY.set(); return tell(f"[task] {r.get('codex_prompt') or text}   || heard: {text}; {now}; held {json.dumps(rd_held())}")
     if RUN["p"] and RUN["p"].poll() is None:               # a new action replaces the running one
         interrupt_codex()
     o = r.get("object")
@@ -963,7 +968,7 @@ def main():
     if a[0] == "run":
         run() if "--yolo" in a else run_manual()
     elif a[0] == "attach":                                # watch / type into the Codex session
-        os.environ.pop("TMUX", None); os.execvp("tmux", ["tmux", "-L", "default", "attach", "-t", TMUX])
+        os.environ.pop("TMUX", None); os.execvp("tmux", ["tmux", "-L", "default", "attach", "-t", f"={TMUX}"])
     elif a[0] == "on":
         open(ON, "w").write("on")
     elif a[0] == "off":
