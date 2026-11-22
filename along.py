@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SEEN, IDLE, MUTE = f"{HERE}/.along_seen.json", f"{HERE}/along_idle.json", f"{HERE}/.along_mute"
 HELD = f"{HERE}/.along_held.json"                        # {"left": "toothbrush"}: what each arm holds (set by the agent)
 EVENTS = f"{HERE}/.along_events.jsonl"                    # conversation + state history (debug page /along)
-TMUX, W, H = "along", 800, 450
+TMUX, SPARE, W, H = "along", "along-spare", 800, 450    # Codex session + a warm one with only the brief (instant reset)
 ROI, CHANGE = (150, 60, 650, 430), 0.02                    # centre of the table (scene px) where new things wake Along
 BG = f"{HERE}/along_idle_bg.npy"
 CODEX = ["codex", "--dangerously-bypass-approvals-and-sandbox", "-C", HERE,
@@ -123,7 +123,7 @@ class LiveVoice:
     def __init__(self, on_text):
         self.on, self.on_text, self.phase, self.prob, self.stt_busy = threading.Event(), on_text, "off", 0.0, False
         self.ws, self.deleg, self.heard, self.speak_until = None, None, "", 0.0
-        self.utt, self.utt_t = "", 0.0                    # current utterance, for the page log
+        self.utt, self.utt_t, self.pend = "", 0.0, 0.0     # current utterance (page log); pending hand-off time
         threading.Thread(target=self.loop, daemon=True).start()
 
     def loop(self):
@@ -203,14 +203,16 @@ class LiveVoice:
                     said += e["delta"]
                 elif k == "session.input_transcript.delta":
                     self.heard += e["delta"]; self.utt += e["delta"]; self.utt_t = time.time(); self.phase = "speech"
-                elif k == "session.delegation.created":         # carries no text: hand over everything heard since the last one
-                    if self.utt.strip():
-                        event("heard", self.utt.strip()); self.utt = ""
-                    self.deleg, req, self.heard, self.phase = e["delegation"]["id"], " ".join(self.heard.split())[-400:], "", "listening"
-                    event("sys", "GPT-Live delegated the last request to Codex")
-                    self.on_text(req or "(inaudible)")
+                elif k == "session.delegation.created":         # carries no text: hand over what was heard, once it settles
+                    self.deleg, self.pend, self.phase = e["delegation"]["id"], time.time(), "listening"
+                    event("sys", "GPT-Live handed off a request")
                 elif k == "error":
                     log("live:", e); event("error", f"live: {e.get('error', e)}")
+                if self.pend and (time.time() - self.utt_t > 0.35 or time.time() - self.pend > 0.9):   # last words are in
+                    if self.utt.strip():
+                        event("heard", self.utt.strip()); self.utt = ""
+                    req, self.heard, self.pend = " ".join(self.heard.split())[-400:], "", 0.0
+                    threading.Thread(target=self.on_text, args=(req or "(inaudible)",), daemon=True).start()
                 if self.utt.strip() and time.time() - self.utt_t > 1.0:     # utterance over: log it once
                     event("heard", self.utt.strip()); self.utt = ""
                 if time.time() > self.speak_until + 0.3:
@@ -234,21 +236,46 @@ def tmux(*a, **k):
 TELL = threading.Lock()
 
 
-def codex_up():
-    """Start the one Codex session (once; it stays up across idle/active, auto-compacts) and wait until it has read the brief."""
-    if tmux("has-session", "-t", TMUX).returncode == 0:
+def codex_up(name=TMUX):
+    """Start a Codex session (once; it stays up across idle/active, auto-compacts) and wait until it has read the brief."""
+    if tmux("has-session", "-t", name).returncode == 0:
         return
-    log("starting Codex in tmux session", TMUX); event("sys", "starting Codex (reading its brief)")
-    tmux("new-session", "-d", "-s", TMUX, "-x", "200", "-y", "50", "-c", HERE,
+    if name == TMUX and spare_ready():                    # the warm spare becomes the session: no wait
+        tmux("rename-session", "-t", SPARE, TMUX); event("sys", "Codex: warm spare session took over")
+        threading.Thread(target=spare_up, daemon=True).start(); return
+    log("starting Codex in tmux session", name); event("sys", f"starting Codex{' spare' if name == SPARE else ''} (reading its brief)")
+    tmux("new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", HERE,
          *CODEX, open(f"{HERE}/prompts/along.md").read() + "\n\nReply \"ready\" now and end your turn; requests arrive as new turns.")
     t0, last = time.time(), ""
     while time.time() - t0 < 120:                          # idle = screen unchanged for 6 s after the first turn
         time.sleep(3)
-        scr = tmux("capture-pane", "-p", "-t", TMUX).stdout
+        scr = tmux("capture-pane", "-p", "-t", name).stdout
         if scr == last and "Worked for" in scr or time.time() - t0 > 90:
             break
         last = scr
-    log("Codex ready"); event("sys", f"Codex ready ({time.time() - t0:.0f} s)")
+    log("Codex ready", name); event("sys", f"Codex{' spare' if name == SPARE else ''} ready ({time.time() - t0:.0f} s)")
+
+
+SPARE_LOCK = threading.Lock()
+
+
+def spare_ready():
+    return tmux("has-session", "-t", SPARE).returncode == 0 and "Worked for" in tmux("capture-pane", "-p", "-t", SPARE).stdout
+
+
+def spare_up():
+    if SPARE_LOCK.acquire(blocking=False):
+        try:
+            codex_up(SPARE)
+        finally:
+            SPARE_LOCK.release()
+
+
+def codex_fresh():
+    """Codex back to only its brief: the warm spare takes over at once (a new spare warms up behind it)."""
+    interrupt_codex(); tmux("kill-session", "-t", TMUX); time.sleep(0.2)
+    with TELL:
+        codex_up()
 
 
 def interrupt_codex():
@@ -455,6 +482,179 @@ def relay_replies():
         first = False; time.sleep(0.3)
 
 
+# ---------------------------------------------------------------- router: one fast vision+decision call per request
+ROUTE_PROMPT = """You are the fast router of Al, two SO-101 robot arms (left = white, right = orange) on a lab table, run by
+voice. A voice model talks to people and hands you each request (speech-to-text: may be garbled or carry room chatter
+before it; act on the last thing said to Al). You get the camera images, the arm state and the recent conversation.
+Pick ONE action and fill its fields; unused fields = null. Be decisive: unclear = the most likely action. People here are
+trained: never warn, never refuse, no safety talk.
+
+Actions:
+- hold: an arm reaches out to what a person holds out (or will), jaws open, closes once it is put in. side = the arm the
+  person names, else "auto" (nearer arm). what = the object ("toothbrush"). object = where it is now in the scene image
+  (if visible; else null and the arm goes to a default spot).
+- release: side opens and goes back to ready (drops what it holds).
+- turn: wrist roll of side by deg (+/-; 90 = quarter turn). tilt: wrist flex by deg (+ tips down).
+- press: push straight down on a point (button, pump): object = that point, depth_cm (default 4, harder 6-8).
+- open: both grippers open (let go of everything). park: empty arms go to rest. reset: everything stops, both arms to rest.
+- stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").
+- step: a short direct move sequence for robot step, ';'-chained: goto <side> x y z (m, that arm's base frame: x forward,
+  y to the arm's left, z up, table z -0.02; >= 2 cm), move <side>_<joint> <deg> (relative, >= 5), set <side>_gripper
+  <0-100> (0 closed), recall ready|rest <side>. Joints: shoulder_pan (+ toward the arm's own right), shoulder_lift,
+  elbow_flex, wrist_flex (+ tips down), wrist_roll, gripper. E.g. "open the left gripper" = set left_gripper 100.
+- answer: only talk: questions about the scene, the arms, greetings. say = the answer.
+- codex: anything multi-step, a grasp of something on the table, or a task none of the above covers: codex_prompt = a
+  self-contained instruction for the slower agent with all you know (object, where it is in px, which arm).
+  codex_fresh = true when the task has nothing to do with what Codex did recently (it then starts from a clean session,
+  faster and not confused by old context); false to continue its context ("now do the same with the other arm").
+- none: not addressed to Al (chatter, other conversations, other languages not meant for Al): say = "".
+
+say = what Al says when the action is done: ONE short sentence ("Done.", "Here you go.", an answer of at most ~12 words). For hold leave it ""
+(the hold reports itself). object: u, v = pixel in the scene image (800x450) of the point to grab (a long thing: the
+middle of its handle, not the bristles/head), dist_cm = its distance from the scene camera, height_cm = its height above
+the table, pose = "upright" or "flat" (held horizontally), axis_deg = its long axis in the scene image (0 horizontal,
+90 vertical). Scale: the scene camera is 33 cm above the table and 70 cm from each arm base (bases 21 cm apart); the
+scene camera faces the arms: the orange/right arm is on image-left. Wrist images look out between each arm's jaws."""
+
+ROUTE_SCHEMA = {"type": "object", "additionalProperties": False,
+    "required": ["action", "side", "what", "deg", "depth_cm", "step", "object", "say", "codex_prompt", "codex_fresh"],
+    "properties": {
+        "action": {"type": "string", "enum": ["hold", "release", "turn", "tilt", "press", "open", "park", "reset", "stop",
+                                              "step", "answer", "codex", "none"]},
+        "side": {"type": ["string", "null"], "enum": ["left", "right", "auto", None]},
+        "what": {"type": ["string", "null"]}, "deg": {"type": ["number", "null"]}, "depth_cm": {"type": ["number", "null"]},
+        "step": {"type": ["string", "null"]},
+        "object": {"anyOf": [{"type": "null"}, {"type": "object", "additionalProperties": False,
+            "required": ["u", "v", "dist_cm", "height_cm", "pose", "axis_deg"],
+            "properties": {"u": {"type": "number"}, "v": {"type": "number"}, "dist_cm": {"type": ["number", "null"]},
+                           "height_cm": {"type": ["number", "null"]}, "pose": {"type": "string", "enum": ["upright", "flat"]},
+                           "axis_deg": {"type": ["number", "null"]}}}]},
+        "say": {"type": "string"}, "codex_prompt": {"type": ["string", "null"]}, "codex_fresh": {"type": ["boolean", "null"]}}}
+
+RUN = {"p": None, "what": ""}                               # the skill process the router started (stop kills it)
+
+
+def frames(cams=("scene", "left", "right")):
+    """Live camera thumbs as data URLs (scene = the 800x450 tile, so pixels go straight into locate)."""
+    import base64, cv2
+    from so101 import Robot
+    bot, out = Robot(), []
+    for c in cams:
+        try:
+            img = bot.thumb(c, *((W, H) if c == "scene" else (640, 360)))
+            out.append((c, "data:image/jpeg;base64," + base64.b64encode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1]).decode()))
+        except Exception as e:
+            log("frames: no", c, e)
+    return out
+
+
+def recent():
+    """Recent conversation and recent activity (router decisions, Codex tasks + commands + turn ends, skill results)."""
+    try:
+        ev = [json.loads(l) for l in open(EVENTS).readlines()[-150:] if l.strip()]
+    except FileNotFoundError:
+        return "", ""
+    lab = {"heard": "person", "say": "Al", "live": "Al"}
+    conv = "\n".join(f"{lab[e['kind']]}: {e['text'][:160]}" for e in ev if e["kind"] in lab)[-900:]
+    acts = [f"{time.time() - e['t']:.0f} s ago {e['kind']}: {e['text'][:200]}" for e in ev
+            if e["kind"] in ("route", "tell", "skill") or e["kind"] == "codex" and not e["text"].startswith("→")]
+    return conv, "\n".join(acts[-10:])
+
+
+def route(text):
+    """One gpt-6.1-sol ultrafast call: transcript + state + 3 images -> {action, params, object, say, codex_prompt}."""
+    import requests
+    t0 = time.time()
+    run = f"running now: {RUN['what']}" if RUN["p"] and RUN["p"].poll() is None else "nothing running"
+    conv, acts = recent()
+    ctx = (f"Request (last thing heard): {text}\n\nArm state: {STATE['text'] or 'unknown'} ({time.time() - STATE['t']:.0f} s old); "
+           f"held: {json.dumps(rd_held())}; {run}; Codex {'is busy with a task' if BUSY.is_set() else 'idle'}."
+           f"\n\nRecent conversation:\n{conv}\n\nRecent activity (router = you, tell = task sent to Codex, codex = its "
+           f"commands and turns):\n{acts}")
+    imgs = frames()
+    content = [{"type": "input_text", "text": ctx}] + sum(([{"type": "input_text", "text": f"{c} camera:"},
+                                                            {"type": "input_image", "image_url": u}] for c, u in imgs), [])
+    r = requests.post("https://api.openai.com/v1/responses", headers={"Authorization": f"Bearer {env('OPENAI_API_KEY')}"},
+                      json={"model": env("ALONG_ROUTE_MODEL", "gpt-6.1-sol"), "service_tier": env("ALONG_LOOK_TIER", "ultrafast"),
+                            "reasoning": {"effort": "low"}, "instructions": ROUTE_PROMPT,
+                            "text": {"format": {"type": "json_schema", "name": "route", "strict": True, "schema": ROUTE_SCHEMA}},
+                            "input": [{"role": "user", "content": content}]}, timeout=30)
+    r.raise_for_status()
+    out = json.loads("".join(c.get("text", "") for o in r.json().get("output", []) if o.get("type") == "message"
+                             for c in o.get("content", [])))
+    event("route", f"({time.time() - t0:.1f} s) " + json.dumps({k: v for k, v in out.items() if v not in (None, "")}))
+    return out
+
+
+def act(r, text):
+    """Run the router's decision. Skills run as `along <skill>` processes (latest request wins; stop kills them)."""
+    a, side, say_done = r["action"], r.get("side") or "auto", (r.get("say") or "").strip()
+    if a == "none":
+        return
+    if a == "answer":
+        return say(say_done or "Hm?")
+    if a == "stop":
+        interrupt_codex(); return say(say_done or "Stopped.")
+    if a == "codex":
+        if r.get("codex_fresh"):
+            event("sys", "router: fresh Codex context for this task"); codex_fresh()
+        age = time.time() - STATE["t"]
+        BUSY.set(); return tell(f"[task] {r.get('codex_prompt') or text}   || heard: {text}; now: {STATE['text']}; "
+                                f"held {json.dumps(rd_held())}; snap_all.jpg {age:.0f} s old")
+    if RUN["p"] and RUN["p"].poll() is None:               # a new action replaces the running one
+        interrupt_codex()
+    o = r.get("object")
+    if a == "hold":
+        if o:
+            json.dump({"t": time.time(), **o}, open(AIM + ".tmp", "w")); os.replace(AIM + ".tmp", AIM)
+        else:
+            json.dump({"t": time.time(), "u": None}, open(AIM, "w"))
+        args = ["hold"] + ([side] if side in ("left", "right") else []) + ([r["what"]] if r.get("what") else [])
+    elif a in ("release", "turn", "tilt"):
+        if side not in ("left", "right"):
+            h = rd_held(); side = next(iter(h)) if len(h) == 1 else "right"
+        args = [a, side] + ([str(r.get("deg") or 90)] if a != "release" else [])
+    elif a == "press":
+        if not o:
+            return say("Where should I press?")
+        from so101 import Robot
+        h = (o.get("height_cm") or 0) / 100 - 0.02
+        loc = Robot().locate(o["u"], o["v"], h)
+        side = side if side in ("left", "right") else min(("left", "right"), key=lambda sd: loc[sd][0] ** 2 + loc[sd][1] ** 2)
+        args = ["press", side, *(f"{v:.3f}" for v in loc[side]), str(r.get("depth_cm") or 4)]
+    elif a in ("open", "park", "reset"):
+        args = [a]
+    elif a == "step":
+        cmds = [c.strip() for c in (r.get("step") or "").split(";") if c.strip()]
+        if not cmds or any(c.split()[0] not in ("goto", "move", "set", "recall", "nudge") for c in cmds):
+            return say("Hm, I can't do that one.")
+        args = None
+    def go():
+        BUSY.set()
+        try:
+            if args is None:
+                RUN.update(p=None, what="step"); out = ""
+                for c in cmds:                              # one robot step each: a ';' chain sums into one target
+                    out = rstep(c)
+                ok = bool(out)
+            else:
+                p = subprocess.Popen([sys.executable, __file__, *args], cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                RUN.update(p=p, what="along " + " ".join(args)); out = p.communicate()[0]; ok = p.returncode == 0
+            killed = args is not None and p.returncode < 0
+            event("skill", ("stopped: " if killed else "done: " if ok else "failed: ") + " ".join(out.split())[-240:])
+            if a == "hold":
+                if p.returncode < 0:                       # killed by stop / a newer request: say nothing
+                    return
+                say("Got it." if re.search(r"""['"]holding['"]: (True|true)""", out) else "Robot error." if "FAILED" in out else "Missed it.")
+            elif ok:
+                say(say_done or "Done.")
+            elif args is not None and p.returncode >= 0:
+                say("That didn't work.")
+        finally:
+            BUSY.clear()
+    threading.Thread(target=go, daemon=True).start()
+
+
 def run_manual():
     """Manual on/off (`along on` / `along off`, or the page buttons) instead of the scene detector."""
     on, last_voice, last_check = False, 0.0, time.time()
@@ -464,9 +664,11 @@ def run_manual():
         last_voice = time.time()
         age = time.time() - STATE["t"]
         ctx = f"   || now: {STATE['text']}; held {json.dumps(rd_held())}; snap_all.jpg {age:.0f} s old" if age < 6 else ""
-        if re.search(r"\b(hold|take|grab|catch|hand|halt|nimm|greif|fang)", text, re.I):
-            event("aim", "sounds like a hand-over: looking where the object is (prefetch)")
-            threading.Thread(target=aim_seen, daemon=True).start()   # where it is held out: ready before Al asks
+        if env("ALONG_ROUTER", "1") != "0":
+            try:
+                return act(route(text), text)
+            except Exception as e:
+                log("router failed", e); event("error", f"router: {e}; Codex takes it")
         BUSY.set(); tell(f"[voice] {text}{ctx}")
     if not env("OPENAI_API_KEY"):
         sys.exit("OPENAI_API_KEY missing (.env): GPT-Live is the voice")
@@ -488,6 +690,8 @@ def run_manual():
             last_check = t
             if not env("ALONG_DRY") and tmux("has-session", "-t", TMUX).returncode != 0:
                 threading.Thread(target=tell_lock_up, daemon=True).start()
+            elif not env("ALONG_DRY") and tmux("has-session", "-t", SPARE).returncode != 0:
+                threading.Thread(target=spare_up, daemon=True).start()
         json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
                    "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
                    "voice": "GPT-Live", "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice,
@@ -737,9 +941,7 @@ def skill(a):
         print(rstep("recall ready left; recall ready right")); print(rstep("recall rest left; recall rest right"))
     elif cmd == "fresh":                            # along fresh: Codex back to just its brief (dashboard "Reset Al")
         event("sys", "resetting Codex: new session with only the brief")
-        interrupt_codex(); tmux("kill-session", "-t", TMUX); time.sleep(0.5)
-        with TELL:
-            codex_up()
+        codex_fresh(); spare_up()
         print("Codex reset: fresh session, brief only")
     elif cmd == "park":                             # along park: arms that hold nothing go to rest
         h = rd_held()
@@ -776,6 +978,16 @@ def main():
         t = " ".join(a[1:])
         if t.startswith("[voice]"):
             event("heard", t[7:].strip() + "  (typed)")
+            if env("ALONG_ROUTER", "1") != "0":           # typed on the page: same path as speech (router first)
+                txt = rstep(); STATE.update(text=brief_state(txt), t=time.time())
+                try:
+                    act(route(t[7:].strip()), t[7:].strip())
+                    for th in threading.enumerate():
+                        if th is not threading.main_thread():
+                            th.join()
+                    return
+                except Exception as e:
+                    event("error", f"router: {e}; Codex takes it")
         tell(t)
     elif a[0] == "idle":
         e = Eyes(conf=0.1); d = [x for _ in range(6) for x in e.detect()]   # union of a few frames: flicker-proof
