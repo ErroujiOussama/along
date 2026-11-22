@@ -6,7 +6,7 @@ Skill used in this episode: {used}
 Current skills (skills/<name>/SKILL.md):
 {index}
 
-First read the relevant files: `ls skills/`, the SKILL.md of the skill that was used (if any) and of any skill that
+Ignore ~/.codex/skills (Codex's own skills, a different format); this format is below. First read the relevant files: `ls skills/`, the SKILL.md of the skill that was used (if any) and of any skill that
 covers a similar task. Re-read a file right before you edit it. Then do the first that applies:
 1. Patch the skill that was used, if the episode shows a better step, a missing check or a pitfall.
 2. Patch a broader existing skill that covers this task class.
@@ -15,6 +15,13 @@ covers a similar task. Re-read a file right before you edit it. Then do the firs
    already says it all.
 
 Writing rules:
+- The skill turn already gets fresh scene + wrist images: step 1 acts on them (e.g. a `goto <side> px u v z` above the
+  target). Use check only where precision matters: after the approach, after the risky step.
+- Keep the numbers this episode measured that generalise: estimate biases ("height estimates ran ~5 cm high"), the
+  sign and scale of corrections ("+y moves the tip image-right, ~15 px per cm"), working depths. These are the point.
+- Keep the person's corrections as rules ("they said: move the arm, not the bottle").
+- Don't encode workarounds for errors that came from Al's tools (refusals of its own press/goto helpers): those get
+  fixed in code; at most one line saying what the error looked like.
 - Name by task class, not instance: "press-pump", "hand-over-tool", never "press-soap-at-0.31". Lowercase, dashes.
 - Steps take parameters (from `robot locate`, a check, the args), never literal coordinates from this episode. Numbers
   that generalise (offsets, px per cm, heights of a class of object) are fine with a word on where they come from.
