@@ -49,6 +49,8 @@ systemctl --user start along   # daemon (along.service; link it like robotd.serv
                                # .along_codex.json, log .along_codex.log); Al's final reply is spoken
 along attach           # open Al's Codex conversation in the Codex TUI
 along on · along off   # (or the /along buttons); off = voice off + interrupt Al, arms stay put
+                       # while on, records to ~/Videos/al-demo/<time>/: scene/left/right.mkv (robotd `rec`), screen.mkv
+                       # (screenrec.py, desktop portal: pick the screen once), mic.wav, speaker.wav; ALONG_RECORD=0 = off
 along open · along reset · along fresh   # release both grips · stop everything, both arms to rest · Codex back to only its brief (also /along buttons)
 along hold|release|turn|tilt|open|park ...   # one-call skills Al uses (see along.py --help)
 along look "where is the toothbrush?" · along tell "[voice] hold this"   # vision · type into Al's session

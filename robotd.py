@@ -337,6 +337,36 @@ def camera_loop(side):
         cam.release()
 
 
+REC = {}                                   # cam -> (thread, stop event) while recording
+
+
+def rec_loop(side, path, stop, fps=25):
+    """Feed side's newest frames as JPEGs to ffmpeg (stream copy into .mkv, no re-encode) until stop is set."""
+    import cv2, subprocess
+    p = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-y", "-use_wallclock_as_timestamps", "1", "-f", "image2pipe",
+                          "-c:v", "mjpeg", "-i", "-", "-c:v", "copy", path], stdin=subprocess.PIPE)
+    last = 0.0
+    try:
+        while not stop.is_set() and running:
+            fr = frames.get(side)
+            if fr and fr[0] != last:
+                last = fr[0]
+                p.stdin.write(cv2.imencode(".jpg", fr[1], [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes())
+            stop.wait(1 / fps)
+    except (BrokenPipeError, OSError) as e:
+        log(f"WARN rec {side}: {e}")
+    finally:
+        try:
+            p.stdin.close(); p.wait(timeout=10)
+        except Exception:
+            p.kill()
+
+
+def rec_stop():
+    for side, (th, ev) in list(REC.items()):
+        ev.set(); th.join(timeout=12); REC.pop(side, None)
+
+
 def load_camcfg():
     try:
         return json.load(open(CAMCFG))
@@ -639,6 +669,15 @@ def handle(parts):
         return {"cams": cams()}
     if cmd == "camctl":
         return camctl(parts)
+    if cmd == "rec":      # rec start <dir> | rec stop | rec: every camera to <dir>/<cam>.mkv (MJPEG, wall-clock timestamps)
+        if len(parts) > 2 and parts[1] == "start":
+            rec_stop(); os.makedirs(parts[2], exist_ok=True)
+            for side in CAMS:
+                ev = threading.Event(); th = threading.Thread(target=rec_loop, args=(side, f"{parts[2]}/{side}.mkv", ev), daemon=True)
+                th.start(); REC[side] = (th, ev)
+        elif len(parts) > 1 and parts[1] == "stop":
+            rec_stop()
+        return {"recording": sorted(REC)}
     if cmd == "thumb":
         import base64, cv2
         t, img = get_frame(parts[1])

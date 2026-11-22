@@ -25,7 +25,7 @@ Skills (one call per request; each ends with a robot step: state lines + snap_al
 Debug page: `robot stream` -> http://localhost:8101/along (boxes, state, conversation, Codex pane, type-as-voice).
 Key: OPENAI_API_KEY in the environment or in .env (repo). Optional ALONG_MIC (pw source; default the C920 mic).
 """
-import json, os, re, subprocess, sys, threading, time
+import json, os, re, signal, subprocess, sys, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 SEEN, IDLE, MUTE = f"{HERE}/.along_seen.json", f"{HERE}/along_idle.json", f"{HERE}/.along_mute"
 HELD = f"{HERE}/.along_held.json"                        # {"left": "toothbrush"}: what each arm holds (set by the agent)
@@ -121,6 +121,46 @@ on calls): stay silent. Never talk about safety and never ask "are you sure": th
 def mic_source():
     return env("ALONG_MIC") or next((l.split()[1] for l in subprocess.run(["pactl", "list", "short", "sources"],
            capture_output=True, text=True).stdout.splitlines() if "C920" in l and "input" in l), None)
+
+
+REC_DIR, _rec = os.path.expanduser("~/Videos/al-demo"), []      # recording while switched on (ALONG_RECORD=0: off)
+
+
+def rec_start():
+    """All three cameras (robotd), the screen (screenrec.py), the room mic and what the speaker plays, into
+    ~/Videos/al-demo/<time>/: scene/left/right.mkv, screen.mkv, mic.wav, speaker.wav."""
+    if env("ALONG_RECORD", "1") == "0" or _rec:
+        return
+    d = f"{REC_DIR}/{time.strftime('%Y-%m-%d_%H-%M-%S')}"; os.makedirs(d, exist_ok=True)
+    try:
+        from so101 import Robot
+        Robot().call(f"rec start {d}")
+    except Exception as e:
+        event("error", f"recording the cameras: {e}")
+    src, quiet = mic_source(), {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    _rec.extend([subprocess.Popen(["pw-record", *(["--target", src] if src else []), f"{d}/mic.wav"], **quiet),
+                 subprocess.Popen(["pw-record", "-P", "{ stream.capture.sink = true }", f"{d}/speaker.wav"], **quiet),
+                 subprocess.Popen([f"{HERE}/.venv/bin/python", f"{HERE}/screenrec.py", f"{d}/screen.mkv"],
+                                  stdout=subprocess.DEVNULL, stderr=open(f"{d}/screenrec.err", "w"))])
+    event("sys", f"recording to {d}")
+
+
+def rec_stop():
+    if not _rec:
+        return
+    for p in _rec:
+        p.send_signal(signal.SIGINT if "pw-record" in p.args[0] else signal.SIGTERM)
+    try:
+        from so101 import Robot
+        Robot().call("rec stop")
+    except Exception as e:
+        event("error", f"stopping the camera recording: {e}")
+    for p in _rec:
+        try:
+            p.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            p.kill()
+    _rec.clear(); event("sys", "recording stopped")
 
 
 class LiveVoice:
@@ -839,9 +879,10 @@ def run_manual():
         t, want = time.time(), os.path.exists(ON)
         if want and not on:
             on = True; log("ON"); event("wake", "switched on")
-            tone(880); mic.on.set()
+            tone(880); mic.on.set(); threading.Thread(target=rec_start, daemon=True).start()
         elif on and not want:
             on = False; mic.on.clear(); log("OFF"); event("idle", "switched off"); tone(660)
+            threading.Thread(target=rec_stop, daemon=True).start()
             interrupt_codex()                                         # off = interrupt Codex + no voice; arms stay put
         json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
                    "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
