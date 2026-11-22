@@ -1,150 +1,639 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>along debug</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Al dashboard</title>
 <style>
-:root{--bg:#111;--fg:#ccc;--dim:#888;--line:#333;--acc:#e8a33d;--ok:#3fb950;--bad:#f85149;--blue:#58a6ff}
+:root{--bg:#0e1013;--p1:#15181d;--p2:#1b1f26;--p3:#232833;--line:#2a303b;--fg:#d5d9e0;--dim:#8a93a3;--faint:#5c6573;
+ --acc:#e8a33d;--ok:#3fb950;--bad:#f85149;--blue:#58a6ff;--vio:#c297ff;--cyan:#39c5cf;--me:#1d3a5f;--al:#232833}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
-header{display:flex;gap:10px;align-items:center;padding:6px 10px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
-header b{color:#fff} a{color:var(--blue)}
-.chip{padding:2px 8px;border-radius:10px;border:1px solid var(--line);font-size:12px;color:var(--dim)}
-.chip.on{color:#111;background:var(--ok);border-color:var(--ok)} .chip.warn{color:#111;background:var(--acc);border-color:var(--acc)}
-.chip.bad{color:#fff;background:var(--bad);border-color:var(--bad)}
-main{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:10px;padding:10px}
-#main2{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}
-@media (max-width:900px){main,#main2{grid-template-columns:1fr}}
-section{border:1px solid var(--line);border-radius:6px;padding:8px;min-width:0}
-h3{margin:0 0 6px;font-size:13px;color:#fff;display:flex;justify-content:space-between;gap:8px}
-h3 span{color:var(--dim);font-weight:normal}
-img{width:100%;display:block;border-radius:4px}
-table{width:100%;border-collapse:collapse;font-size:12px} td,th{padding:2px 6px;text-align:left;border-bottom:1px solid #222}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column;overflow:hidden}
+a{color:var(--blue)} button{font:inherit}
+.mono,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+/* ---- top: state · now · arms · controls ---- */
+#top{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:10px 14px;align-items:center;padding:8px 12px;background:var(--p1);border-bottom:1px solid var(--line)}
+#pill{display:flex;flex-direction:column;justify-content:center;min-width:190px;padding:7px 14px;border-radius:10px;background:#333;color:#fff}
+#pill b{font-size:20px;letter-spacing:.3px;white-space:nowrap} #pill small{font-size:12px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+#pill .vad{height:4px;margin-top:4px;background:#0005;border-radius:2px;overflow:hidden} #pill .vad i{display:block;height:100%;background:#fff;transition:width .2s}
+#pill.down{background:#8b1d1d} #pill.off{background:#2b3038;color:#c8ccd3} #pill.listening{background:#1f6f34} #pill.speech{background:#1f5fae}
+#pill.muted{background:#9a6a10} #pill.stt{background:#6b3fa8}
+#now{min-width:0;display:flex;flex-direction:column;gap:3px;cursor:pointer}
+#now .l1{display:flex;gap:8px;align-items:baseline;min-width:0}
+#now .rq{color:#fff;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+#now .l2{color:var(--dim);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#now .l2 .cx{color:var(--acc)} #now .l2 code{color:#cfd6e0}
+#arms{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--dim)}
+#arms .arm{display:flex;gap:6px;align-items:center;white-space:nowrap} #arms .arm b{color:var(--fg);font-weight:600;width:44px}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block} .dot.l{background:#e9edf2} .dot.r{background:#f08a24}
+#ctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{background:var(--p2);color:var(--dim);border:0;padding:7px 14px;cursor:pointer;font-weight:600}
+.seg button.on{background:var(--ok);color:#06210d} .seg button.offon{background:#3a404b;color:#fff}
+.btn{background:var(--p2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:6px 11px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--acc)} .btn.danger{color:#ffb4ae;border-color:#6b2a27} .btn.danger:hover{background:#4a1716}
+.btn.sm{padding:3px 8px;font-size:12px}
+.links{font-size:12px;display:flex;gap:10px}
+/* ---- chips ---- */
+.st{display:inline-block;font-size:11px;line-height:16px;padding:0 7px;border-radius:8px;border:1px solid var(--line);color:var(--dim);white-space:nowrap;font-weight:500}
+.st.open{color:#111;background:var(--blue);border-color:var(--blue)} .st.asked{color:#111;background:var(--acc);border-color:var(--acc)}
+.st.confirmed,.st.done{color:#06210d;background:var(--ok);border-color:var(--ok)} .st.failed,.st.dropped{color:#fff;background:var(--bad);border-color:var(--bad)}
+.st.work{color:#111;background:var(--acc);border-color:var(--acc)} .st.hold{color:#06210d;background:var(--ok);border-color:var(--ok)}
+/* ---- tabs + panes ---- */
+#tabs{display:none;gap:2px;padding:4px 8px 0;background:var(--p1);border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);padding:7px 10px;cursor:pointer;white-space:nowrap}
+.tab.on{color:#fff;border-bottom-color:var(--acc)}
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr) minmax(360px,440px);gap:0}
+.pane{min-height:0;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--line)}
+.pane:last-child{border-right:0}
+.ph{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--p1);min-height:38px}
+.ph h2{margin:0;font-size:13px;color:#fff;font-weight:600} .ph .sub{color:var(--dim);font-size:12px;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ph .tab{padding:4px 8px}
+.scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
+#p-scene,#p-skills,#p-raw{grid-column:3;grid-row:1} #p-chat{grid-column:1;grid-row:1} #p-tl{grid-column:2;grid-row:1}
+.side{display:none} .side.show{display:flex}
+@media (max-width:1099px){
+ #top{grid-template-columns:auto minmax(0,1fr);}
+ #arms{grid-column:1/-1;flex-direction:row;flex-wrap:wrap;gap:4px 14px} #ctl{grid-column:1/-1;justify-content:flex-start}
+ #tabs{display:flex} main{grid-template-columns:minmax(0,1fr)} .pane{grid-column:1 !important;grid-row:1 !important;display:none;border-right:0}
+ .pane.show{display:flex} .sidetabs{display:none}
+}
+@media (max-width:560px){
+ #top{padding:6px 8px;gap:6px 10px} #pill{min-width:0;padding:5px 10px} #pill b{font-size:16px} #pill small{max-width:150px}
+ .links,.ph .sub{display:none} #now{grid-column:1/-1;order:3} #arms{grid-column:auto;flex-direction:column;order:2} #ctl{order:4} #arms .arm{white-space:normal;flex-wrap:wrap;font-size:11px;gap:2px 6px} #arms .arm b{width:auto} .btn{padding:5px 8px;font-size:13px} .seg button{padding:5px 11px}
+}
+/* ---- chat ---- */
+#chat{padding:10px 10px 4px;display:flex;flex-direction:column;gap:2px}
+#chat>div{display:flex;flex-direction:column}
+.bub{max-width:86%;padding:6px 10px;border-radius:14px;overflow-wrap:anywhere;white-space:pre-wrap}
+.me{align-items:flex-end} .me .bub{background:var(--me);color:#e6f0ff;border-bottom-right-radius:4px}
+.al{align-items:flex-start} .al .bub{background:var(--al);color:#fff;border-bottom-left-radius:4px}
+.who{font-size:11px;color:var(--faint);margin:8px 6px 2px} .who .ty{color:var(--acc)}
+.chat-sys{align-items:center} .chat-sys span{font-size:11px;color:var(--faint);margin:8px 0 4px}
+.chat-sys.err span{color:var(--bad)}
+.chatter .bub{background:none;border:1px dashed var(--line);color:var(--faint);font-size:12px;cursor:pointer;max-height:3.2em;overflow:hidden}
+.chatter.open .bub{max-height:none}
+.pend .bub{opacity:.65;font-style:italic}
+#say{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line);background:var(--p1)}
+#say input{flex:1;min-width:0;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+#say input:focus{outline:none;border-color:var(--blue)}
+/* ---- timeline ---- */
+#tl{padding:8px 10px 20px;display:flex;flex-direction:column;gap:8px}
+.card{border:1px solid var(--line);border-radius:10px;background:var(--p1);min-width:0}
+.card.cur{border-color:#3b5a85}
+.ch{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 10px;padding:8px 10px;cursor:pointer;align-items:baseline}
+.ch:hover{background:var(--p2);border-radius:10px}
+.ch .t{color:var(--faint);font-size:12px} .ch .q{color:#fff;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card.open .ch .q{white-space:normal}
+.ch .m{color:var(--dim);font-size:12px;white-space:nowrap;text-align:right}
+.ch .o{grid-column:2/-1;color:var(--dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cb{border-top:1px solid var(--line);padding:4px 0 6px}
+.r{display:grid;grid-template-columns:58px 74px minmax(0,1fr);gap:8px;padding:3px 10px;align-items:baseline;font-size:13px}
+.r .t{color:var(--faint);font-size:11px} .r .k{font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--dim)}
+.r .s{min-width:0;overflow-wrap:anywhere} .r.x>.s>.h{cursor:pointer} .r.x>.s>.h:hover{color:#fff}
+.r .h{display:flex;gap:4px;min-width:0;align-items:baseline} .r .hb{flex:1;min-width:0} .r .h .car{color:var(--faint);font-size:10px;flex:none}
+.r .one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.r.open .one{white-space:pre-wrap}
+.r.sep{border-top:1px dashed var(--line);margin-top:4px;padding-top:6px}
+.k-person .k{color:var(--blue)} .k-person .s{color:#cfe3ff}
+.k-say .k{color:var(--ok)} .k-say .s{color:#fff}
+.k-router .k{color:var(--blue)} .k-plan .k,.k-skill .k{color:var(--acc)} .k-check .k{color:var(--cyan)}
+.k-fail .k,.k-error .k{color:var(--bad)} .k-error .s{color:#ffb4ae}
+.k-task .k,.k-cmd .k,.k-codex .k{color:#79c0ff} .k-cmd .s{font-family:ui-monospace,monospace;font-size:12px;color:#e2e6ec}
+.k-view .k,.k-look .k{color:var(--vio)} .k-learn .k{color:var(--ok)} .k-status .k{color:var(--dim)} .k-sys .s{color:var(--dim)} .k-call .k{color:var(--faint)}
+.res{display:block;font-family:ui-monospace,monospace;font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r.open .res{white-space:pre-wrap}
+.res.bad{color:#ff8f87}
+.acts{display:inline-flex;flex-wrap:wrap;gap:4px;vertical-align:baseline}
+.a{font-size:12px;padding:0 6px;border-radius:5px;background:var(--p3);color:#e6e9ee;font-family:ui-monospace,monospace;overflow-wrap:anywhere}
+.a.codex{background:#1d3550;color:#9fd0ff} .a.skill{background:#4a3613;color:#ffd38a} .a.say{background:none;color:#cfe8cf;font-family:inherit;font-style:italic;padding:0}
+.lab{font-size:10px;font-weight:700;color:#111;background:var(--dim);border-radius:4px;padding:0 4px;margin-right:4px;text-transform:uppercase}
+.lab.new{background:var(--blue)} .lab.continue{background:#8fb3e8} .lab.confirm{background:var(--ok)} .lab.deny{background:var(--bad);color:#fff}
+.sec{color:var(--faint);font-size:11px;margin-left:6px;white-space:nowrap}
+.det{margin:6px 0 4px;padding:8px;background:#0a0c0f;border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;gap:8px;font-size:12px}
+.det .lb{color:var(--dim);font-size:11px;margin-bottom:2px}
+.det pre{margin:0;max-height:340px;overflow:auto;font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere;color:#d6dbe3}
+.det details>summary{cursor:pointer;color:var(--dim);font-size:11px}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap} .thumbs a{display:flex;flex-direction:column;font-size:11px;color:var(--dim);text-decoration:none}
+.thumbs img{width:150px;max-width:28vw;border:1px solid var(--line);border-radius:4px;background:#000}
+.ids{color:var(--faint);font-size:10px;overflow-wrap:anywhere}
+.empty{color:var(--dim);padding:20px;text-align:center}
+/* ---- scene / skills / raw ---- */
+#scenebox{padding:10px;display:flex;flex-direction:column;gap:10px}
+#scene{width:100%;aspect-ratio:16/9;display:block;border-radius:8px;background:#000;object-fit:contain}
+.legend{font-size:11px;color:var(--dim)} .legend i{font-style:normal;font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:12px} td,th{padding:3px 6px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--dim);font-weight:normal} tr.new td:first-child{color:var(--ok)}
-#act{height:300px;overflow:auto;font-size:12px;display:flex;flex-direction:column;gap:2px;font-family:ui-monospace,monospace}
-#act .ev{grid-template-columns:62px 58px 1fr} .codex .k{color:#79c0ff} .codex .x{color:#bbb} .aim .k,.skill .k{color:var(--acc)}
-.skill .x{color:#fff} .sys .k{color:var(--dim)} .held .k{color:var(--ok)}
-#conv{height:340px;overflow:auto;font-size:13px;display:flex;flex-direction:column;gap:3px}
-.ev{display:grid;grid-template-columns:62px 52px 1fr;gap:6px} .ev .t{color:var(--dim);font-size:11px}
-.ev .k{font-size:11px;text-transform:uppercase} .heard .k{color:var(--blue)} .say .k,.live .k{color:var(--ok)} .live .x{color:#fff}
-.tell .k,.tell .x{color:var(--dim)} .wake .k,.idle .k{color:var(--acc)} .error .k,.error .x{color:var(--bad)}
-.ignored .k,.ignored .x{color:#555} .say .x{color:#fff} .look .k,.seen .k{color:#d2a8ff} .seen .x{color:#e5d4ff} .heard .x{color:#cfe3ff}
-pre{margin:0;height:300px;overflow:auto;font-size:11px;background:#0a0a0a;padding:6px;border-radius:4px;white-space:pre-wrap}
-form{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px} input{flex:1;min-width:140px;background:#000;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:4px 6px}
-button{background:#222;color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 9px;cursor:pointer} button:hover{border-color:var(--acc)}
-.arms{display:flex;gap:14px;font-size:12px;flex-wrap:wrap}
-label{font-size:12px;color:var(--dim)}
-#banner{display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:12px 14px;font-size:22px;font-weight:600;color:#fff;background:#333}
-#banner.idle{background:#2a2a2a;color:#aaa} #banner.listening{background:#1f6f34} #banner.speech{background:#1f5fae}
-#banner.muted{background:#9a6a10} #banner.stt{background:#6b3fa8} #banner.down{background:#8b1d1d}
-#banner small{font-size:14px;font-weight:normal;opacity:.9} #vad{width:120px;height:10px;background:#0006;border-radius:5px;overflow:hidden}
-#vad i{display:block;height:100%;background:#fff}
-#calls{max-height:520px;overflow:auto;font-size:12px}
-.grp{border-top:1px solid var(--line);margin-top:4px} .grp>.gh{display:flex;gap:8px;align-items:baseline;padding:4px 2px;color:#fff;cursor:pointer;flex-wrap:wrap}
-.gh .st{font-size:11px;padding:0 6px;border-radius:8px;border:1px solid var(--line);color:var(--dim)}
-.st.open,.st.asked{color:#111;background:var(--acc);border-color:var(--acc)} .st.confirmed{color:#111;background:var(--ok);border-color:var(--ok)}
-.st.failed{color:#fff;background:var(--bad);border-color:var(--bad)} .gh .rq{color:#cfe3ff;min-width:0;overflow-wrap:anywhere}
-.call>.cr{display:grid;grid-template-columns:62px 52px 42px 96px minmax(0,1fr);gap:6px;padding:1px 2px;cursor:pointer;align-items:baseline}
-.call>.cr:hover{background:#1a1a1a} .cr .t,.cr .n{color:var(--dim);font-size:11px} .cr .s{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#ddd}
-.cr .k{font-size:11px;text-transform:uppercase} .call.err .s{color:var(--bad)}
-.kroute{color:var(--blue)} .kskill{color:var(--acc)} .kcheck{color:var(--ok)} .kfail{color:var(--bad)} .klook{color:#d2a8ff} .kother{color:var(--dim)}
-.det{margin:2px 0 8px 10px;padding:6px;background:#0a0a0a;border-left:2px solid var(--line);border-radius:4px;display:flex;flex-direction:column;gap:6px}
-.lb,.det .lb{color:var(--dim);font-size:11px} .det pre{height:auto;max-height:360px;padding:4px}
-.det .thumbs{display:flex;gap:6px;flex-wrap:wrap} .det .thumbs a{display:flex;flex-direction:column;font-size:11px;color:var(--dim);text-decoration:none}
-.det .thumbs img{width:160px;border:1px solid var(--line)} .det .er{color:var(--bad);white-space:pre-wrap} .det .ids{color:#666;font-size:10px;overflow-wrap:anywhere}
-details>summary{cursor:pointer;color:var(--dim);font-size:11px}
-.actsw{max-height:520px;overflow:auto} #acts td{vertical-align:top} #acts tr.sk{cursor:pointer} #acts tr.sk:hover td{background:#1a1a1a}
-#acts .nm{color:#fff;white-space:nowrap} #acts td:nth-child(2){min-width:140px} #acts .ar{color:var(--dim);font-family:ui-monospace,monospace;font-size:11px}
-.tag{font-size:10px;padding:0 5px;border-radius:7px;background:var(--acc);color:#111;margin-left:4px} .tag.d{background:#333;color:var(--dim)}
-.w{color:var(--ok)} .f{color:var(--bad)} #acts tr.body td{background:#0a0a0a} #acts tr.body pre{height:auto;max-height:400px}
-@media (max-width:600px){.call>.cr{grid-template-columns:54px 46px minmax(0,1fr)} .cr .n{display:none}}
+.kv{font-size:12px;color:var(--dim)} .kv b{color:var(--fg);font-weight:500}
+#skills{padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.sk{border:1px solid var(--line);border-radius:8px;padding:7px 9px;background:var(--p1)}
+.sk .nm{color:#fff;font-weight:600;font-family:ui-monospace,monospace} .sk .uw{color:var(--fg);font-size:13px;margin-top:2px}
+.sk .ar{color:var(--dim);font-family:ui-monospace,monospace;font-size:11px;margin-top:2px;overflow-wrap:anywhere}
+.sk .ss{font-size:11px;color:var(--dim);margin-top:3px} .w{color:var(--ok)} .f{color:var(--bad)}
+.sk.learned{border-color:#5a4520} .sk.learned .hd{cursor:pointer}
+.tag{font-size:10px;padding:0 6px;border-radius:7px;background:var(--acc);color:#111;margin-left:6px;font-family:system-ui} .tag.d{background:var(--p3);color:var(--dim)}
+.sk pre{margin:6px 0 0;max-height:420px;overflow:auto;font-size:11.5px;background:#0a0c0f;padding:8px;border-radius:6px;white-space:pre-wrap}
+.grp-h{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin:8px 2px 0}
+#rawlog{margin:0;padding:8px 10px;font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere;color:#cdd3dc}
+.ev{display:grid;grid-template-columns:58px 60px minmax(0,1fr);gap:6px;font-size:11.5px;padding:1px 10px;font-family:ui-monospace,monospace}
+.ev .t,.ev .k{color:var(--faint)} .ev .x{overflow-wrap:anywhere;white-space:pre-wrap}
+#rawfilter{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12px;width:140px}
 </style></head><body>
-<header><b>along</b><span id="chips"></span><span style="flex:1"></span><a href="/">cameras</a><a href="/inspect">inspector</a></header>
-<div style="display:flex;background:#1a1a1a;gap:8px;padding:8px 10px"><button id="on" style="font-size:18px;padding:6px 22px;background:#1f6f34;color:#fff">Along ON</button><button id="off" style="font-size:18px;padding:6px 22px">Along OFF</button><span style="flex:1"></span><button id="open" style="font-size:16px;padding:6px 16px">Release grips</button><button id="fresh" style="font-size:16px;padding:6px 16px" title="Codex starts over with only its brief: forgets this conversation">Reset Al</button><button id="reset" style="font-size:16px;padding:6px 16px;background:#8b1d1d;color:#fff">Reset arms</button></div>
-<div id="banner" class="idle">…</div>
+<div id="top">
+ <div id="pill" class="off"><b>…</b><small></small><div class="vad"><i style="width:0"></i></div></div>
+ <div id="now" title="click: show this episode in the timeline"><div class="l1"><span class="rq">…</span></div><div class="l2"></div></div>
+ <div id="arms"></div>
+ <div id="ctl">
+  <div class="seg" title="voice session"><button id="on">ON</button><button id="off">OFF</button></div>
+  <button class="btn" id="open" title="open both grippers">Release grips</button>
+  <button class="btn" id="fresh" title="Codex starts over with only its brief: forgets this conversation (arms stay put)">Reset Al</button>
+  <button class="btn danger" id="reset" title="stop Al, open both grippers, move both arms to rest">Reset arms</button>
+  <span class="links"><a href="/">cameras</a><a href="/inspect">inspector</a></span>
+ </div>
+</div>
+<nav id="tabs"><button class="tab" data-tab="chat">Chat</button><button class="tab" data-tab="tl">Timeline</button><button class="tab" data-tab="scene">Scene</button><button class="tab" data-tab="skills">Actions</button><button class="tab" data-tab="raw">Raw log</button></nav>
 <main>
- <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
-  <section><h3>Scene camera <span id="legend">cyan = wake zone · green = new (wakes it) · orange = known · magenta = on an arm (ignored) · grey = idle baseline</span></h3>
-   <img id="scene" alt="scene camera with detection boxes"></section>
-  <section><h3><span id="dtitle" style="color:#fff">Detections</span> <span id="age"></span></h3><table><thead><tr><th>label</th><th>conf</th><th>px (locate)</th><th>box</th></tr></thead><tbody id="dets"></tbody></table>
-   <div class="arms" id="arms" style="margin-top:8px"></div></section>
- </div>
- <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
-  <section><h3>Conversation <span>what was heard and said</span></h3>
-   <div id="conv"></div>
-   <form id="f"><input id="txt" placeholder="type as if spoken → Codex">
-    <button data-cmd="voice">send as voice</button><button data-cmd="say">speak it</button></form>
-   <form id="yolo"><button type="button" id="wake">force wake</button><button type="button" id="idle" title="clear the table first">store idle baseline</button></form></section>
-  <section><h3>Behind the scenes <span id="actstat"></span></h3>
-   <div id="act"></div></section>
-  <section><h3>Codex turns <span>headless codex exec · along attach = open the thread</span></h3><pre id="codex"></pre></section>
- </div>
-</main>
-<main id="main2">
- <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
-  <section><h3>Model calls <span id="callstat">every OpenAI call Al made · click = details</span></h3><div id="calls"></div></section>
- </div>
- <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
-  <section><h3>Actions <span id="skstat">built-in + learned skills · click a learned one</span></h3>
-   <div class="actsw"><table id="acts"><thead><tr><th>name</th><th>use when</th><th>stats</th></tr></thead><tbody id="actsb"></tbody></table></div></section>
- </div>
+ <section class="pane" id="p-chat">
+  <div class="ph"><h2>Conversation</h2><span class="sub" id="chatsub">person ↔ Al</span></div>
+  <div class="scroll" id="chatsc"><div id="chat"></div></div>
+  <form id="say"><input id="txt" placeholder="Type as if spoken to Al…" autocomplete="off"><button class="btn" data-cmd="voice" title="handled exactly like speech">Send</button><button class="btn" data-cmd="say" title="Al speaks this text">Speak</button></form>
+ </section>
+ <section class="pane" id="p-tl">
+  <div class="ph"><h2>Why did it do that?</h2><span class="sub" id="tlsub">episodes: router → skills → checks → Codex → outcome · click a row for the exact model call</span></div>
+  <div class="scroll" id="tlsc"><div id="tl"></div></div>
+ </section>
+ <section class="pane side" id="p-scene">
+  <div class="ph sidetabs"><button class="tab" data-side="scene">Scene</button><button class="tab" data-side="skills">Actions</button><button class="tab" data-side="raw">Raw log</button></div>
+  <div class="scroll"><div id="scenebox">
+   <img id="scene" alt="scene camera with detection boxes">
+   <div class="legend" id="legend"><i style="color:#3cdc3c">green</i> new (wakes it) · <i style="color:#e6aa3c">orange</i> known · <i style="color:#c83cc8">magenta</i> on an arm (ignored) · <i style="color:#3cc8e6">cyan</i> wake zone · <i style="color:#888">grey</i> idle baseline</div>
+   <div class="kv" id="snap"></div>
+   <div id="detwrap"><table><thead><tr><th>label</th><th>conf</th><th>px (locate)</th><th>box</th></tr></thead><tbody id="dets"></tbody></table>
+    <div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" id="wake">Force wake</button><button class="btn sm" id="idle" title="clear the table first">Store idle baseline</button></div></div>
+  </div></div>
+ </section>
+ <section class="pane side" id="p-skills">
+  <div class="ph sidetabs"><button class="tab" data-side="scene">Scene</button><button class="tab" data-side="skills">Actions</button><button class="tab" data-side="raw">Raw log</button></div>
+  <div class="ph"><h2>Actions</h2><span class="sub" id="skstat"></span></div>
+  <div class="scroll"><div id="skills"></div></div>
+ </section>
+ <section class="pane side" id="p-raw">
+  <div class="ph sidetabs"><button class="tab" data-side="scene">Scene</button><button class="tab" data-side="skills">Actions</button><button class="tab" data-side="raw">Raw log</button></div>
+  <div class="ph"><span class="seg"><button id="rw-codex" class="on">Codex log</button><button id="rw-ev">All events</button></span><input id="rawfilter" placeholder="filter" style="margin-left:auto"></div>
+  <div class="scroll" id="rawsc"><pre id="rawlog"></pre><div id="rawev" hidden></div></div>
+ </section>
 </main>
 <script>
-const $ = id => document.getElementById(id), esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 const hm = t => new Date(t * 1000).toTimeString().slice(0, 8);
-let lastEv = -1, stick = true, stickA = true;
-const CONV = new Set(['heard', 'say', 'live', 'wake', 'idle', 'ignored', 'error']);
-$('act').addEventListener('scroll', e => { const c = e.target; stickA = c.scrollTop + c.clientHeight > c.scrollHeight - 30; });
-$('conv').addEventListener('scroll', e => { const c = e.target; stick = c.scrollTop + c.clientHeight > c.scrollHeight - 30; });
-(async function scene() { for (;;) { try {
+const hmm = t => new Date(t * 1000).toTimeString().slice(0, 5);
+const now = () => Date.now() / 1000;
+const ago = t => { const s = now() - t; return s < 90 ? Math.max(0, s).toFixed(0) + ' s' : s < 5400 ? (s / 60).toFixed(0) + ' min' : s < 172800 ? (s / 3600).toFixed(0) + ' h' : (s / 86400).toFixed(0) + ' d'; };
+const dur = s => s < 90 ? s.toFixed(0) + ' s' : (s / 60).toFixed(1) + ' min';
+const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+const doit = (cmd, text) => fetch('/along/do?' + new URLSearchParams({cmd, ...(text ? {text} : {})}));
+
+// ---------- keyed DOM: reuse elements by key, touch innerHTML only when it changed ----------
+function reconcile(box, items, make) {
+  const m = box._k || (box._k = new Map()), keep = new Set();
+  let prev = null;
+  for (const it of items) {
+    let el = m.get(it.key);
+    if (!el) { el = make ? make(it) : document.createElement('div'); m.set(it.key, el); }
+    if (it.cls != null && el.className !== it.cls) el.className = it.cls;
+    if (it.html != null && el._h !== it.html) { el.innerHTML = it.html; el._h = it.html; }
+    if (it.update) it.update(el);
+    const want = prev ? prev.nextSibling : box.firstChild;
+    if (want !== el) box.insertBefore(el, want);
+    prev = el; keep.add(it.key);
+  }
+  for (const [k, el] of m) if (!keep.has(k)) { el.remove(); m.delete(k); }
+}
+const atBottom = sc => sc.scrollTop + sc.clientHeight > sc.scrollHeight - 40;
+
+// ---------- layout: tabs (narrow) / side tabs (wide) ----------
+const narrowQ = matchMedia('(max-width:1099px)');
+let tab = 'tl', side = 'scene';
+try { tab = localStorage.getItem('al.tab') || tab; side = localStorage.getItem('al.side') || side; } catch (e) {}
+function layout() {
+  const panes = {chat: 'p-chat', tl: 'p-tl', scene: 'p-scene', skills: 'p-skills', raw: 'p-raw'};
+  for (const [k, id] of Object.entries(panes)) {
+    const show = narrowQ.matches ? k === tab : (k === 'chat' || k === 'tl' || k === side);
+    $(id).classList.toggle('show', show);
+  }
+  document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  document.querySelectorAll('[data-side]').forEach(b => b.classList.toggle('on', b.dataset.side === side));
+  try { localStorage.setItem('al.tab', tab); localStorage.setItem('al.side', side); } catch (e) {}
+  for (const sc of [$('chatsc'), $('tlsc')]) sc.scrollTop = 1e9;
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-tab]'); if (t) { tab = t.dataset.tab; if (['scene', 'skills', 'raw'].includes(tab)) side = tab; layout(); }
+  const s = e.target.closest('[data-side]'); if (s) { side = s.dataset.side; layout(); }
+});
+narrowQ.addEventListener('change', layout);
+layout();
+const sceneVisible = () => !document.hidden && $('p-scene').classList.contains('show');
+
+// ---------- data ----------
+let D = null, C = {calls: [], episodes: {}, instr: {}}, callSig = '', evSig = '', dirty = true;
+const openRows = new Set(), cardOpen = new Map();
+let lastCards = [];
+
+// ---------- parsing events ----------
+function tail(s) { const i = s.search(/[\[{]/); if (i < 0) return null; try { const j = JSON.parse(s.slice(i)); return Array.isArray(j) ? j : j.actions || [j]; } catch (e) { return null; } }
+function parseRoute(text) {
+  const m = text.match(/^\(([\d.]+) s\)\s*(?:([a-z]+): )?/), rest = m ? text.slice(m[0].length) : text;
+  const i = rest.search(/[\[{]/);
+  return {secs: m?.[1], label: m?.[2], sum: (i < 0 ? rest : rest.slice(0, i)).trim(), acts: tail(rest)};
+}
+function parseTurn(text) {
+  const m = text.match(/^(\w+) \(([\d.]+) s\):\s*/s), rest = m ? text.slice(m[0].length) : text, i = rest.search(/[\[{]/);
+  return {kind: m?.[1] || 'turn', secs: m?.[2], sum: (i < 0 ? rest : rest.slice(0, i)).trim(), acts: tail(rest)};
+}
+function actHTML(a) {
+  if (!a || typeof a !== 'object') return `<span class="a">${esc(a)}</span>`;
+  const n = a.action || '?', side = a.side && a.side !== 'auto' ? ' ' + a.side : '';
+  let h;
+  if (n === 'step') h = `<span class="a">${esc(a.step || 'step')}</span>`;
+  else if (n === 'skill') h = `<span class="a skill">skill:${esc(a.skill)}${side}</span>`;
+  else if (n === 'codex') h = `<span class="a codex">→ Codex${a.codex_fresh ? ' (fresh)' : ''}</span>`;
+  else if (n === 'check') h = `<span class="a">check: ${esc(a.question || '')}</span>`;
+  else if (n === 'answer' || n === 'say') h = '';
+  else h = `<span class="a">${esc(n + side + (a.what ? ' ' + a.what : '') + (a.deg != null ? ' ' + a.deg + '°' : '') + (a.depth_cm != null ? ' ' + a.depth_cm + ' cm' : ''))}</span>`;
+  if (a.say) h += `<span class="a say">“${esc(a.say)}”</span>`;
+  if (!h) h = `<span class="a">${esc(n)}</span>`;
+  return h;
+}
+const actsHTML = acts => acts && acts.length ? `<span class="acts">${acts.map(actHTML).join('')}</span>` : '';
+
+// ---------- model call detail (inline, at the step it belongs to) ----------
+const instrText = id => C.calls.find(c => c.id === id)?.instructions ?? C.instr?.[id];
+function callHTML(c) {
+  let h = '';
+  const u = c.usage || {};
+  h += `<div class="ids">${esc(c.kind)} call · ${esc(c.model || '')} ${esc(c.tier || '')} · ${c.secs ?? '?'} s · tokens in ${u.input ?? '?'} (cached ${u.cached ?? 0}) out ${u.output ?? '?'} · ${esc(c.id)}${c.prev ? ' · continues ' + esc(c.prev.slice(0, 18)) + '…' : ''}</div>`;
+  if (c.instructions) {
+    const ref = String(c.instructions).startsWith('=') ? c.instructions.slice(1) : null, txt = ref ? instrText(ref) : c.instructions;
+    h += `<details><summary>instructions${ref ? ' (same as call ' + esc(ref) + ')' : ''} · ${txt == null ? 'not loaded' : txt.length + ' chars'}</summary>${txt == null ? '' : `<pre>${esc(txt)}</pre>`}</details>`;
+  }
+  const imgs = [];
+  (c.input || []).forEach((p, i) => {
+    if (p.text != null) h += `<div><div class="lb">input${c.input.length > 1 ? ' ' + (i + 1) : ''}</div><pre>${esc(p.text)}</pre></div>`;
+    else if (p.image) { const s = '/along/calls/' + encodeURIComponent(p.image); imgs.push(`<a href="${s}" target="_blank"><img loading="lazy" src="${s}" alt="${esc(p.label || '')}">${esc(p.label || p.image)}</a>`); }
+    else if ('image' in p) imgs.push(`<span class="lb">${esc(p.label || 'image')}: not saved</span>`);
+  });
+  if (imgs.length) h += `<div><div class="lb">images sent</div><div class="thumbs">${imgs.join('')}</div></div>`;
+  if (c.output != null) h += `<div><div class="lb">output</div><pre>${esc(typeof c.output === 'string' ? c.output : JSON.stringify(c.output, null, 1))}</pre></div>`;
+  if (c.error) h += `<div style="color:var(--bad);white-space:pre-wrap">${esc(c.error)}</div>`;
+  return `<div class="det">${h}</div>`;
+}
+
+// ---------- timeline model: events (+ calls) → episode cards ----------
+const SKIP_SYS = /^(voice session (up|closed)|GPT-Live handed off a request|GPT-Live did not hand this off)/;
+function buildCards(events, calls) {
+  // match model calls to the event they produced (route ↔ route, skill/check/fail ↔ turn, look ↔ seen): end time ≈ event time
+  const used = new Set(), callOf = new Map();
+  const ends = calls.map(c => ({c, end: c.t + (c.secs || 0)}));
+  events.forEach((e, i) => {
+    let want = null;
+    if (e.kind === 'route') want = k => k === 'route';
+    else if (e.kind === 'turn') { const tk = parseTurn(e.text).kind; want = k => k === tk; }
+    else if (e.kind === 'seen') want = k => k === 'look';
+    if (!want) return;
+    let best = null, bd = 1.6;
+    for (const x of ends) if (!used.has(x.c.id) && want(x.c.kind)) { const dd = Math.abs(x.end - e.t); if (dd < bd) { bd = dd; best = x.c; } }
+    if (best) { used.add(best.id); callOf.set(i, best); }
+  });
+  const stream = events.map((e, i) => ({...e, i, call: callOf.get(i)}));
+  for (const x of ends) if (!used.has(x.c.id)) stream.push({t: x.end, kind: 'call', text: '', call: x.c, i: 'c' + x.c.id});
+  stream.sort((a, b) => a.t - b.t || (typeof a.i === 'number' && typeof b.i === 'number' ? a.i - b.i : 0));
+  // dedupe helpers: Codex's own "along look"/"along press" also appear as look/seen/skill events
+  const codexCmds = events.filter(e => e.kind === 'codex' && e.text.startsWith('$ ')).map(e => ({t: e.t, c: e.text.slice(2).replace(/^"|"$/g, '')}));
+  const near = (t, w, f) => codexCmds.some(x => Math.abs(x.t - t) < w && f(x.c));
+  const arrows = events.filter(e => e.kind === 'codex' && e.text.startsWith('→')).map(e => e.t);
+
+  const cards = [], byEp = {};
+  let cur = null, pendHeard = [], seq = {};
+  const newCard = (t, id) => { const c = {key: 'k' + t + (id || ''), id, t0: t, t1: t, rows: [], status: null, request: null, heard: [], says: [], skills: new Set(), codex: 0, errs: 0, last: null}; cards.push(c); if (id) byEp[id] = c; return c; };
+  const rowKey = e => { const b = 'r' + e.t + e.kind; seq[b] = (seq[b] || 0) + 1; return b + '_' + seq[b]; };
+  const push = (card, e, row) => { row.key = row.key || rowKey(e); row.t = e.t; card.rows.push(row); card.t1 = Math.max(card.t1, e.t); return row; };
+  const flushHeard = card => { for (const h of pendHeard) { push(card, h, {k: 'person', tag: 'person', html: esc(h.text)}); card.heard.push(h.text); } pendHeard = []; };
+  let lastCmd = null;
+  for (const e of stream) {
+    const k = e.kind, x = e.text || '';
+    if (['live', 'wake', 'idle', 'ignored'].includes(k)) continue;
+    if (k === 'sys' && SKIP_SYS.test(x)) continue;
+    if (k === 'held' && (x === '{}' || !x)) continue;
+    if (k === 'heard') { pendHeard.push(e); pendHeard = pendHeard.filter(h => e.t - h.t < 25); continue; }
+    if (k === 'episode') {
+      let j; try { j = JSON.parse(x); } catch (er) { continue; }
+      let c = byEp[j.id];
+      if (!c) { if (cur && !cur.id && cur.rows.some(r => r.route) && e.t - cur.t1 < 1) { cur.id = j.id; byEp[j.id] = cur; c = cur; } else { c = newCard(e.t, j.id); flushHeard(c); } }
+      cur = c;
+      if (j.request) c.request = j.request;
+      (j.skills || []).forEach(s => c.skills.add(s));
+      if (c.status !== j.status) { if (c.status) push(c, e, {k: 'status', tag: 'status', html: `episode → <span class="st ${esc(j.status)}">${esc(j.status)}</span>`}); c.status = j.status; }
+      continue;
+    }
+    if (k === 'route') {
+      const p = parseRoute(x);
+      const ep = events.find(v => v.kind === 'episode' && v.t >= e.t - 0.05 && v.t - e.t < 0.6);
+      let id = e.call?.episode || null;
+      if (!id && ep) { try { id = JSON.parse(ep.text).id; } catch (er) {} }
+      if (!id && p.label && p.label !== 'new') { const lc = [...cards].reverse().find(v => v.id); if (lc) id = lc.id; }   // continue/confirm/deny: the open episode
+      if (id && byEp[id] && p.label !== 'new') cur = byEp[id]; else cur = newCard(e.t, id);
+      flushHeard(cur);
+      const r = push(cur, e, {k: 'router', tag: 'router', route: true, call: e.call,
+        html: `${p.label ? `<span class="lab ${esc(p.label)}">${esc(p.label)}</span>` : ''}${actsHTML(p.acts) || esc(p.sum)}${p.secs ? `<span class="sec">${p.secs} s</span>` : ''}`,
+        raw: p.acts ? JSON.stringify(p.acts, null, 1) : x});
+      cur.last = r; continue;
+    }
+    if (!cur) { cur = newCard(e.t, null); cur.pre = true; }
+    if (pendHeard.length && (k === 'tell' || k === 'say')) flushHeard(cur);
+    const c = cur;
+    if (k === 'turn') {
+      const p = parseTurn(x), kk = p.kind === 'fail' ? 'fail' : p.kind === 'check' ? 'check' : 'plan';
+      c.last = push(c, e, {k: kk, tag: p.kind === 'skill' ? 'expand' : p.kind, call: e.call, html: `${actsHTML(p.acts) || esc(p.sum)}${p.secs ? `<span class="sec">${p.secs} s</span>` : ''}`, raw: p.acts ? JSON.stringify(p.acts, null, 1) : x});
+    } else if (k === 'skill') {
+      if (x.startsWith('along ') && near(e.t, 1.2, cc => cc === x)) continue;
+      const bad = /^failed/.test(x);
+      if (bad) c.errs++;
+      const m = x.match(/^skill:([\w-]+)/); if (m) c.skills.add(m[1]);
+      c.last = push(c, e, {k: bad ? 'fail' : 'skill', tag: bad ? 'failed' : 'skill', html: `<span class="one">${esc(x)}</span>`, long: x.length > 90});
+    } else if (k === 'check') {
+      c.last = push(c, e, {k: 'check', tag: 'check', html: esc(x)});
+    } else if (k === 'tell') {
+      c.codex++;
+      c.last = push(c, e, {k: 'task', tag: 'codex task', html: `<span class="one">${esc(x.replace(/^\[task\]\s*/, ''))}</span>`, long: true, sep: true});
+    } else if (k === 'codex') {
+      if (x.startsWith('→')) {
+        const out = x.replace(/^→\s*/, ''), bad = /\bERR\b|Traceback|\(exit [1-9]/.test(out);
+        if (lastCmd && lastCmd.card === c && lastCmd.res == null && e.t - lastCmd.t < 600) { lastCmd.res = out; lastCmd.bad = bad; lastCmd.long = true; if (bad) c.errs++; continue; }
+        push(c, e, {k: 'codex', tag: 'result', html: `<span class="res${bad ? ' bad' : ''}">${esc(out)}</span>`, long: out.length > 80});
+      } else if (x.startsWith('$ ')) {
+        lastCmd = push(c, e, {k: 'cmd', tag: 'codex $', cmd: x.slice(2).replace(/^"|"$/g, ''), card: c}); c.last = lastCmd;
+      } else if (x.startsWith('views ')) {
+        push(c, e, {k: 'view', tag: 'codex sees', html: 'opened ' + esc(x.slice(6))});
+      } else if (x.startsWith('refine ')) {
+        push(c, e, {k: 'learn', tag: 'learn', html: `<span class="one mono" style="font-size:12px">${esc(x.slice(7))}</span>`, long: x.length > 90});
+      } else {
+        const done = /^turn (done|stopped)/.test(x);
+        c.last = push(c, e, {k: 'codex', tag: 'codex', html: `<span style="color:var(--dim)">${esc(x)}</span>`});
+        if (done) lastCmd = null;
+      }
+    } else if (k === 'look') {
+      if (near(e.t, 3, cc => cc.startsWith('along look'))) continue;
+      push(c, e, {k: 'look', tag: 'look?', html: esc(x)});
+    } else if (k === 'seen') {
+      if (arrows.some(t => t >= e.t && t - e.t < 0.5)) continue;
+      push(c, e, {k: 'look', tag: 'seen', call: e.call, html: `<span class="one">${esc(x)}</span>`, long: x.length > 90});
+    } else if (k === 'aim') {
+      push(c, e, {k: 'skill', tag: 'aim', html: esc(x)});
+    } else if (k === 'say') {
+      c.says.push(x);
+      push(c, e, {k: 'say', tag: 'Al says', html: '“' + esc(x) + '”'});
+    } else if (k === 'refine') {
+      push(c, e, {k: 'learn', tag: 'learn', html: esc(x)});
+    } else if (k === 'error') {
+      c.errs++; push(c, e, {k: 'error', tag: 'error', html: esc(x)});
+    } else if (k === 'held') {
+      push(c, e, {k: 'sys', tag: 'holds', html: esc(x)});
+    } else if (k === 'call') {
+      const cl = e.call;
+      push(c, e, {k: 'call', tag: cl.kind + ' call', call: cl, html: `<span style="color:var(--dim)">${esc(cl.error ? 'error: ' + cl.error : (cl.output?.actions ? '' : JSON.stringify(cl.output ?? '').slice(0, 120)))}</span>${cl.output?.actions ? actsHTML(cl.output.actions) : ''}`, key: 'call' + cl.id});
+    } else {
+      push(c, e, {k: 'sys', tag: k, html: esc(x)});
+    }
+  }
+  if (pendHeard.length && cur) flushHeard(cur);
+  cards.sort((a, b) => a.t1 - b.t1);
+  return cards;
+}
+
+function rowHTML(r) {
+  const op = openRows.has(r.key), hasDet = !!(r.call || r.raw || r.long || r.res != null);
+  let body;
+  if (r.k === 'cmd') {
+    body = `<span class="h">${hasDet ? `<span class="car">${op ? '▾' : '▸'}</span>` : ''}<span class="hb">${esc(r.cmd)}</span></span>${r.res != null ? `<span class="res${r.bad ? ' bad' : ''}">→ ${esc(r.res)}</span>` : '<span class="res">… running</span>'}`;
+  } else {
+    body = `<span class="h">${hasDet ? `<span class="car">${op ? '▾' : '▸'}</span>` : ''}<span class="hb">${r.html}</span></span>`;
+    if (op && r.call) body += callHTML(r.call);
+    else if (op && r.raw) body += `<div class="det"><div class="lb">plan (from the event log; no matching model call logged)</div><pre>${esc(r.raw)}</pre></div>`;
+  }
+  return {key: r.key, cls: `r k-${r.k}${hasDet ? ' x' : ''}${op ? ' open' : ''}${r.sep ? ' sep' : ''}`,
+    html: `<span class="t">${hm(r.t)}</span><span class="k">${esc(r.tag)}</span><div class="s" ${hasDet ? `data-row="${esc(r.key)}"` : ''}>${body}</div>`};
+}
+function cardTitle(c) {
+  if (c.request) return c.request;
+  if (c.heard.length) return c.heard[c.heard.length - 1];
+  if (c.pre) return '(earlier activity)';
+  const r = c.rows.find(r => r.k === 'learn' || r.k === 'task' || r.k === 'skill');
+  return r ? r.html.replace(/<[^>]+>/g, '') : 'activity';
+}
+function renderTimeline() {
+  if (!D) return;
+  const sc = $('tlsc'), stick = atBottom(sc);
+  const cards = lastCards = buildCards(D.events, C.calls || []);
+  const working = !!D.codex?.pid;
+  const items = cards.map((c, i) => {
+    const latest = i === cards.length - 1, op = cardOpen.has(c.key) ? cardOpen.get(c.key) : i >= cards.length - 2;
+    const st = c.status || (c.id ? 'open' : '');
+    const skills = [...c.skills].map(s => `<span class="a skill">${esc(s)}</span>`).join(' ');
+    const meta = [`${c.rows.length} steps`, c.codex ? `Codex ×${c.codex}` : '', c.errs ? `<span style="color:var(--bad)">${c.errs} failed</span>` : '', c.t1 - c.t0 > 1 ? dur(c.t1 - c.t0) : ''].filter(Boolean).join(' · ');
+    const lastSay = c.says[c.says.length - 1];
+    const head = `<span class="t">${hmm(c.t0)}</span><span class="q">${st ? `<span class="st ${esc(st)}">${esc(st)}</span> ` : ''}${latest && working ? '<span class="st work">Codex working</span> ' : ''}${esc(cardTitle(c))}</span><span class="m">${meta}</span>`
+      + (!op && (lastSay || skills) ? `<span></span><span class="o">${skills}${lastSay ? ' Al: “' + esc(lastSay) + '”' : ''}</span>` : '');
+    return {key: c.key, cls: `card${op ? ' open' : ''}${latest ? ' cur' : ''}`, update: el => {
+      if (!el._ch) { el.innerHTML = '<div class="ch"></div><div class="cb"></div>'; el._ch = el.firstChild; el._cb = el.lastChild; el._ch.dataset.card = c.key; }
+      if (el._ch._h !== head) { el._ch.innerHTML = head; el._ch._h = head; }
+      el._cb.hidden = !op;
+      if (op) reconcile(el._cb, c.rows.map(rowHTML));
+    }};
+  });
+  if (!cards.length) items.push({key: 'empty', cls: 'empty', html: 'No activity logged yet.'});
+  reconcile($('tl'), items);
+  $('tlsub').textContent = `${cards.length} episodes · click a header to fold, a row for the exact model call`;
+  if (stick) sc.scrollTop = 1e9;
+}
+$('tl').addEventListener('click', e => {
+  if (e.target.closest('a, details, pre, .det')) return;
+  const h = e.target.closest('[data-card]');
+  if (h) { const k = h.dataset.card, el = h.parentNode; cardOpen.set(k, !el.classList.contains('open')); renderTimeline(); return; }
+  const r = e.target.closest('[data-row]');
+  if (r) { const k = r.dataset.row; openRows.has(k) ? openRows.delete(k) : openRows.add(k); renderTimeline(); }
+});
+
+// ---------- conversation ----------
+function renderChat() {
+  const sc = $('chatsc'), stick = atBottom(sc), ev = D.events, items = [];
+  let prevWho = null, prevT = 0; const seq = {};
+  ev.forEach((e, i) => {
+    const k = e.kind, x = e.text || '', b = 'c' + e.t + k, key = b + '_' + (seq[b] = (seq[b] || 0) + 1);
+    if (k === 'say') {              // planned speech: shown unless GPT-Live actually spoke it right after
+      const n = norm(x);
+      if (ev.slice(i + 1, i + 30).some(v => v.kind === 'live' && v.t - e.t < 30 && (norm(v.text) === n || norm(v.text).includes(n) || n.includes(norm(v.text)) && norm(v.text).length > 8))) return;
+    }
+    let who = null, cls, html;
+    if (k === 'heard') { who = 'me'; const typed = /\(typed\)\s*$/.test(x); html = `<div class="bub">${esc(x.replace(/\s*\(typed\)\s*$/, ''))}</div>`; if (typed) who = 'me typed'; }
+    else if (k === 'live' || k === 'say') { who = 'al'; html = `<div class="bub">${esc(x)}</div>`; if (k === 'say' && now() - e.t < 15) who = 'al pend'; }
+    else if (k === 'ignored') { who = 'chatter'; html = `<div class="bub" title="room chatter: not addressed to Al (click to expand)">${esc(x)}</div>`; }
+    else if (k === 'wake' || k === 'idle') { items.push({key, cls: 'chat-sys', html: `<span>${k === 'wake' ? 'Al on' : 'Al off'} · ${esc(x || (k === 'wake' ? 'woke' : 'idle'))} · ${hmm(e.t)}</span>`}); prevWho = null; return; }
+    else if (k === 'error') { items.push({key, cls: 'chat-sys err', html: `<span>${esc(x)} · ${hmm(e.t)}</span>`}); prevWho = null; return; }
+    else return;
+    const base = who.split(' ')[0], showWho = base !== prevWho || e.t - prevT > 60;
+    const label = base === 'me' ? 'person' + (who.includes('typed') ? ' <span class="ty">typed</span>' : '') : base === 'al' ? 'Al' : 'room chatter (ignored)';
+    items.push({key, cls: who, html: (showWho ? `<div class="who">${label} · ${hm(e.t)}</div>` : '') + html});
+    prevWho = base; prevT = e.t;
+  });
+  if (!items.length) items.push({key: 'empty', cls: 'empty', html: 'Nothing said yet.'});
+  reconcile($('chat'), items);
+  if (stick) sc.scrollTop = 1e9;
+}
+$('chat').addEventListener('click', e => { const b = e.target.closest('.chatter'); if (b) b.classList.toggle('open'); });
+
+// ---------- top bar ----------
+function renderTop() {
+  const d = D, s = d.seen, age = s ? d.now - s.t : null, why = (s?.why || []).join(', ');
+  let cls, big, small;
+  if (!d.daemon || !s || age > 5) { cls = 'down'; big = 'NOT RUNNING'; small = d.daemon ? `daemon state ${age == null ? '?' : age.toFixed(0)} s old` : 'along run is not running'; }
+  else if (!s.active) { cls = 'off'; big = 'OFF'; small = s.manual ? 'mic off · press ON to talk' : `idle · wakes on something new (${((s.change || 0) * 100).toFixed(1)}%)`; }
+  else if (s.mic === 'muted' || s.speaking) { cls = 'muted'; big = 'AL TALKING'; small = 'mic muted while Al speaks'; }
+  else if (s.stt) { cls = 'stt'; big = 'TRANSCRIBING'; small = 'turning speech into text'; }
+  else if (s.mic === 'speech') { cls = 'speech'; big = 'HEARING YOU'; small = 'speech detected'; }
+  else { cls = 'listening'; big = 'LISTENING'; small = s.reply_open > 0 ? `reply window ${s.reply_open.toFixed(0)} s: just talk` : 'say “Al, …”'; }
+  if (s?.voice && cls !== 'down') small += ' · ' + s.voice;
+  const p = $('pill'); p.className = cls; p.title = why ? 'active because: ' + why : '';
+  p.children[0].textContent = big; p.children[1].textContent = small; p.querySelector('.vad i').style.width = Math.round((s?.vad || 0) * 100) + '%';
+  $('on').className = s?.active ? 'on' : ''; $('off').className = s && !s.active ? 'offon' : '';
+  // now: current episode + what is happening
+  const c = lastCards[lastCards.length - 1], cx = d.codex || {}, working = !!cx.pid || !!s?.busy;
+  let l1 = '', l2 = '';
+  if (c) {
+    const st = c.status || (c.id ? 'open' : '');
+    l1 = `${st ? `<span class="st ${esc(st)}">${esc(st)}</span>` : ''}<span class="rq">${esc(cardTitle(c))}</span><span class="st">${ago(c.t1)} ago</span>`;
+  } else l1 = '<span class="rq" style="color:var(--dim)">no episode yet</span>';
+  if (working) {
+    const lastCmd = [...d.events].reverse().find(e => e.kind === 'codex' && e.text.startsWith('$ '));
+    l2 = `<span class="cx">Codex working${cx.started ? ' ' + dur(d.now - cx.started) : ''}</span>${lastCmd ? ' · <code>' + esc(lastCmd.text.slice(2, 140)) + '</code>' : ''}`;
+  } else if (c?.last) {
+    const r = c.last, txt = (r.cmd || r.html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+    l2 = `last step <b style="color:var(--fg);font-weight:500">${esc(r.tag)}</b> ${esc(txt.slice(0, 160))} · ${ago(r.t)} ago · Codex idle`;
+  } else l2 = 'Codex idle';
+  const n = $('now');
+  if (n._l1 !== l1) { n.children[0].innerHTML = l1; n._l1 = l1; }
+  if (n._l2 !== l2) { n.children[1].innerHTML = l2; n._l2 = l2; }
+  // arms
+  let ah;
+  if (d.arms?.error) ah = `<span style="color:var(--bad)">arms: ${esc(d.arms.error)}</span>`;
+  else ah = ['left', 'right'].map(k => { const a = d.arms?.[k]; if (!a) return '';
+    return `<span class="arm"><span class="dot ${k[0]}"></span><b>${k}</b>grip ${Math.round(a.gripper_target)}%${a.holding ? ' <span class="st hold">HOLDING</span>' : ''}${s?.held?.[k] ? ` <span class="st hold">holds ${esc(s.held[k])}</span>` : ''} · tip ${a.tip.map(v => v.toFixed(2)).join(' ')}</span>`; }).join('');
+  if ($('arms')._h !== ah) { $('arms').innerHTML = ah; $('arms')._h = ah; }
+  $('chatsub').textContent = s ? (s.voice ? s.voice + ' · ' : '') + (s.active ? 'listening' : 'mic off') : '';
+}
+$('now').onclick = () => { if (narrowQ.matches) { tab = 'tl'; layout(); } const c = lastCards[lastCards.length - 1]; if (c) { cardOpen.set(c.key, true); renderTimeline(); $('tlsc').scrollTop = 1e9; } };
+
+// ---------- scene tab ----------
+function renderScene() {
+  const d = D, s = d.seen, man = !!s?.manual;
+  $('legend').hidden = $('detwrap').hidden = man;
+  const snap = s?.state_t ? `arm snapshot ${(d.now - s.state_t).toFixed(0)} s old: <b>${esc(s.state || '')}</b>` : 'no arm snapshot (only while ON)';
+  const sh = snap + (man ? '' : ` · ${(d.idle || []).length} baseline boxes · new-object hits ${(s?.hits || []).filter(Boolean).length}/4 (3 wake)`);
+  if ($('snap')._h !== sh) { $('snap').innerHTML = sh; $('snap')._h = sh; }
+  if (!man) {
+    const nb = new Set((s?.new || []).map(x => x.box.join()));
+    const h = (s?.all || []).map(x => `<tr class="${nb.has(x.box.join()) ? 'new' : ''}"><td>${esc(x.label)}</td><td>${x.conf.toFixed(2)}</td><td>${x.px.join(', ')}</td><td>${x.box.join(' ')}</td></tr>`).join('');
+    if ($('dets')._h !== h) { $('dets').innerHTML = h; $('dets')._h = h; }
+  }
+}
+(async function scene() { for (;;) { if (sceneVisible()) { try {
   const r = await fetch('/along/scene.jpg?' + Date.now(), {cache: 'no-store'});
   if (r.ok) { const u = URL.createObjectURL(await r.blob()), o = $('scene').src; $('scene').src = u; if (o.startsWith('blob:')) URL.revokeObjectURL(o); }
-} catch (e) {} await new Promise(r => setTimeout(r, 400)); } })();
-function chip(txt, cls) { return `<span class="chip ${cls}">${txt}</span> `; }
+} catch (e) {} } await new Promise(r => setTimeout(r, 450)); } })();
+
+// ---------- raw log tab ----------
+let rawMode = 'codex';
+$('rw-codex').onclick = () => { rawMode = 'codex'; $('rw-codex').className = 'on'; $('rw-ev').className = ''; renderRaw(true); };
+$('rw-ev').onclick = () => { rawMode = 'ev'; $('rw-ev').className = 'on'; $('rw-codex').className = ''; renderRaw(true); };
+$('rawfilter').oninput = () => renderRaw(true);
+function renderRaw(force) {
+  if (!D || !$('p-raw').classList.contains('show')) return;
+  const sc = $('rawsc'), stick = force || atBottom(sc), f = $('rawfilter').value.trim().toLowerCase();
+  $('rawlog').hidden = rawMode !== 'codex'; $('rawev').hidden = rawMode === 'codex';
+  if (rawMode === 'codex') {
+    let t = D.codex_log || '(no Codex turn yet: it runs only when the router hands a task over)';
+    if (f) t = t.split('\n').filter(l => l.toLowerCase().includes(f)).join('\n');
+    if ($('rawlog').textContent !== t) $('rawlog').textContent = t;
+  } else {
+    const seq = {};
+    reconcile($('rawev'), D.events.filter(e => !f || (e.kind + ' ' + e.text).toLowerCase().includes(f)).slice(-400).map(e => { const b = 'e' + e.t + e.kind; return {key: b + '_' + (seq[b] = (seq[b] || 0) + 1), cls: 'ev',
+      html: `<span class="t">${hm(e.t)}</span><span class="k">${esc(e.kind)}</span><span class="x">${esc(e.text)}</span>`}; }));
+  }
+  if (stick) sc.scrollTop = 1e9;
+}
+
+// ---------- skills / actions ----------
+const openSk = new Set(); let skSig = '', skData = null;
+function stats(s) {
+  if (!s) return '';
+  const last = Math.max(s.last_patch || 0, s.created || 0);
+  return `${s.uses ?? 0} uses · <span class="w">✓ ${s.wins ?? 0}</span> <span class="f">✗ ${s.fails ?? 0}</span> · ${s.patches ?? 0} patches${last ? ' · changed ' + ago(last) + ' ago' : ''}${s.last_used ? ' · used ' + ago(s.last_used) + ' ago' : ''}`;
+}
+const argsTxt = a => !a ? '' : typeof a === 'string' ? a : Array.isArray(a) ? a.map(x => typeof x === 'string' ? x : x.name || JSON.stringify(x)).join(', ') : Object.keys(a).join(', ');
+function renderSkills(d) {
+  if (d.error) { $('skills').innerHTML = `<div class="empty">skills unavailable: ${esc(d.error)}</div>`; return; }
+  let h = `<div class="grp-h">learned (${(d.skills || []).length})</div>`;
+  for (const s of d.skills || []) {
+    const op = openSk.has(s.name);
+    h += `<div class="sk learned"><div class="hd" data-sk="${esc(s.name)}"><span class="nm">${op ? '▾' : '▸'} ${esc(s.name)}</span><span class="tag">learned</span>${s.direct ? '<span class="tag d">direct</span>' : ''}
+      <div class="uw">${esc(s.use_when || '')}</div>${s.args ? `<div class="ar">${esc(argsTxt(s.args))}</div>` : ''}<div class="ss">${stats(s.stats)}</div></div>`
+      + (op ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px"><span class="ss" style="margin:0">${esc(s.path || '')} · ${(s.history || []).length} snapshots</span><button class="btn sm" data-undo="${esc(s.name)}" ${(s.history || []).length ? '' : 'disabled'}>Undo last change</button></div><pre>${esc(s.body || '')}</pre>` : '') + '</div>';
+  }
+  if (!(d.skills || []).length) h += '<div class="empty" style="padding:8px">none yet: a confirmed episode creates one</div>';
+  h += `<div class="grp-h">built-in (${(d.builtins || []).length})</div>`;
+  h += (d.builtins || []).map(b => `<div class="sk"><span class="nm">${esc(b.name)}</span><div class="uw">${esc(b.use_when || '')}</div>${b.args ? `<div class="ar">${esc(argsTxt(b.args))}</div>` : ''}</div>`).join('');
+  $('skills').innerHTML = h;
+  $('skstat').textContent = `${(d.builtins || []).length} built-in · ${(d.skills || []).length} learned`;
+}
+$('skills').onclick = e => {
+  const u = e.target.closest('[data-undo]');
+  if (u) { if (confirm(`Undo the last change to skill "${u.dataset.undo}"?`)) doit('skill-undo', u.dataset.undo).then(() => setTimeout(pollSkills, 800, true)); return; }
+  const r = e.target.closest('[data-sk]'); if (!r) return;
+  const n = r.dataset.sk; openSk.has(n) ? openSk.delete(n) : openSk.add(n);
+  if (skData) renderSkills(skData);
+};
+async function pollSkills(once) {
+  try {
+    const t = await (await fetch('/along/skills.json', {cache: 'no-store'})).text();
+    if (t !== skSig) { skSig = t; skData = JSON.parse(t); renderSkills(skData); }
+  } catch (e) { $('skills').innerHTML = '<div class="empty">skills: unavailable</div>'; skSig = ''; }
+  if (!once) setTimeout(pollSkills, 5000);
+}
+
+// ---------- polling ----------
 async function poll() {
   try {
-    const d = await (await fetch('/along.json', {cache: 'no-store'})).json(), s = d.seen;
-    const age = s ? d.now - s.t : null;
-    $('chips').innerHTML = chip(d.daemon ? 'daemon running' : 'daemon stopped', d.daemon ? 'on' : 'bad')
-      + (s ? chip(s.active ? 'ACTIVE' : 'idle', s.active ? 'on' : '') + chip(s.listening ? 'mic on' : 'mic off', s.listening ? 'on' : '')
-           + chip(s.speaking ? 'Al talking (mic muted)' : 'silent', s.speaking ? 'warn' : '')
-           + chip('new-object hits ' + (s.hits || []).filter(Boolean).length + '/4 (3 wakes)', '') : '')
-      + chip(d.codex?.pid ? 'Codex working' : d.codex?.thread ? 'Codex idle · thread ' + d.codex.thread.slice(0, 8) : 'Codex: no thread yet', d.codex?.pid ? 'warn' : '');
-    const b = $('banner'), why = (s?.why || []).join(', ');
-    let cls, big, small;
-    if (!d.daemon || !s || age > 5) { cls = 'down'; big = 'NOT RUNNING'; small = d.daemon ? `daemon state ${age?.toFixed(0)} s old` : 'along run is not running: nothing is watched or heard'; }
-    else if (!s.active && s.manual) { cls = 'idle'; big = `OFF · mic OFF${s.voice ? ' · ' + s.voice : ''}`; small = 'not listening. Press "Along ON" to switch it on'; }
-    else if (!s.active) { cls = 'idle'; big = 'IDLE · mic OFF'; small = `not listening. Wakes on something new in the wake zone (change ${((s.change||0)*100).toFixed(1)}%, needs >2% in 3 of 4 frames; hits ${(s.hits||[]).filter(Boolean).length}/4)`; }
-    else if (s.mic === 'muted') { cls = 'muted'; big = 'ACTIVE · Al is talking (mic muted)'; small = 'because: ' + why; }
-    else if (s.stt) { cls = 'stt'; big = 'ACTIVE · transcribing…'; small = 'because: ' + why; }
-    else if (s.mic === 'speech') { cls = 'speech'; big = 'ACTIVE · hearing speech'; small = 'because: ' + why; }
-    else { cls = 'listening'; big = 'ON · LISTENING' + (s.voice ? ' · ' + s.voice : ''); small = (s.reply_open > 0 ? `reply window open ${s.reply_open.toFixed(0)} s: just talk` : 'start with "Al, …"') + ' · because: ' + why; }
-    b.className = cls; b.innerHTML = `<span>${big}</span><span id="vad" title="voice probability"><i style="width:${Math.round((s?.vad||0)*100)}%"></i></span><small>${esc(small)}</small>`;
-    const man = !!s?.manual;
-    $('legend').style.display = $('yolo').style.display = man ? 'none' : '';
-    $('dtitle').textContent = man ? 'Arms' : 'Detections';
-    $('age').textContent = man ? `voice ${s.voice} · ${(s.why || []).length ? 'switched on' : 'switched off'}` : '';
-    if (!man) $('age').textContent = s ? `${age.toFixed(1)} s old · ${d.idle.length} baseline boxes` + ` · active because: ${(s.why || []).join(', ') || 'nothing (idle: mic off)'}` : 'no detections yet (along run not started)';
-    const nb = new Set((s?.new || []).map(x => x.box.join()));
-    $('dets').innerHTML = (s?.all || []).map(x => `<tr class="${nb.has(x.box.join()) ? 'new' : ''}"><td>${esc(x.label)}</td><td>${x.conf.toFixed(2)}</td><td>${x.px.join(', ')}</td><td>${x.box.join(' ')}</td></tr>`).join('');
-    $('arms').innerHTML = d.arms.error ? esc(d.arms.error) : Object.entries(d.arms).map(([k, a]) =>
-      `<span><b>${k}</b> ${s?.held?.[k] ? `<span class="chip on">holds ${esc(s.held[k])}</span>` : ''} gripper ${a.gripper_target} ${a.holding ? '<span class="chip on">HOLDING</span>' : ''} tip ${a.tip.map(v => v.toFixed(3)).join(' ')}</span>`).join('');
-    if (d.events.length && d.events[d.events.length - 1].t !== lastEv) {
-      lastEv = d.events[d.events.length - 1].t;
-      const row = e => `<div class="ev ${e.kind}"><span class="t">${hm(e.t)}</span><span class="k">${{heard: 'you', say: 'Al →', tell: '→ codex', held: 'holds', ignored: 'chatter', look: 'vision?', seen: 'vision', live: 'Al said', codex: 'codex', aim: 'aim', skill: 'skill', sys: 'system', episode: 'episode', check: 'check', turn: 'turn', refine: 'skills'}[e.kind] || e.kind}</span><span class="x">${esc(e.text)}</span></div>`;
-      $('conv').innerHTML = d.events.filter(e => CONV.has(e.kind)).map(row).join('');
-      $('act').innerHTML = d.events.filter(e => !CONV.has(e.kind) || e.kind === 'error').slice(-250).map(row).join('');
-      if (stick) $('conv').scrollTop = 1e9;
-      if (stickA) $('act').scrollTop = 1e9;
-    }
-    $('actstat').innerHTML = s ? (s.busy ? '<span class="chip warn">Codex working</span> ' : '<span class="chip">Codex idle</span> ')
-      + (s.state_t ? `arm snapshot ${(d.now - s.state_t).toFixed(0)} s old${s.state ? ': ' + esc(s.state) : ''}` : 'no arm snapshot (only while ON)') : '';
-    const p = $('codex'), atEnd = p.scrollTop + p.clientHeight > p.scrollHeight - 30;
-    p.textContent = d.codex_log || '(no Codex turn yet: it runs only when the router hands a task over)'; if (atEnd) p.scrollTop = 1e9;
-  } catch (e) { $('chips').innerHTML = chip('stream server unreachable', 'bad'); }
+    D = await (await fetch('/along.json', {cache: 'no-store'})).json();
+    const ev = D.events, sig = ev.length + ':' + (ev.length ? ev[ev.length - 1].t + ev[0].t : '');
+    if (sig !== evSig) { evSig = sig; dirty = true; renderChat(); }
+    if (dirty) { dirty = false; renderTimeline(); }
+    renderTop(); renderScene(); renderRaw();
+  } catch (e) {
+    const p = $('pill'); p.className = 'down'; p.children[0].textContent = 'NO DASHBOARD'; p.children[1].textContent = 'stream server unreachable';
+  }
   setTimeout(poll, 700);
 }
-poll();
-const doit = (cmd, text) => fetch('/along/do?' + new URLSearchParams({cmd, ...(text ? {text} : {})}));
-$('f').onsubmit = e => { e.preventDefault(); const t = $('txt').value.trim(), c = e.submitter?.dataset.cmd || 'voice';
+async function pollCalls() {
+  try {
+    const d = await (await fetch('/along/calls.json?' + new URLSearchParams({n: 200, sig: callSig}), {cache: 'no-store'})).json();
+    if (!d.error && !d.same) { callSig = d.sig; C = d; dirty = true; if (D) { dirty = false; renderTimeline(); } }
+  } catch (e) {}
+  setTimeout(pollCalls, 3000);
+}
+setInterval(() => { if (D) renderTimeline(); }, 15000);   // refresh "x min ago"
+poll(); pollCalls(); pollSkills();
+
+// ---------- controls ----------
+$('say').onsubmit = e => { e.preventDefault(); const t = $('txt').value.trim(), c = e.submitter?.dataset.cmd || 'voice';
   if (!t) return; doit(c === 'voice' ? 'tell' : 'say', c === 'voice' ? '[voice] ' + t : t); $('txt').value = ''; };
 $('on').onclick = () => doit('on'); $('off').onclick = () => doit('off');
 $('open').onclick = () => doit('open');
@@ -152,124 +641,4 @@ $('reset').onclick = () => confirm('Stop Al, open both grippers and move both ar
 $('fresh').onclick = () => confirm('Reset Al? Codex forgets this conversation; the next task starts from only its brief (arms stay put).') && doit('fresh');
 $('wake').onclick = () => doit('wake');
 $('idle').onclick = () => confirm('Store what the scene shows now as the idle baseline?') && doit('idle');
-// ---- Model calls (llm.py log), grouped by episode, keyed by call id so expanded rows survive polls ----
-const ago = t => { const s = Date.now() / 1000 - t; return s < 90 ? s.toFixed(0) + ' s' : s < 5400 ? (s / 60).toFixed(0) + ' min' : s < 172800 ? (s / 3600).toFixed(0) + ' h' : (s / 86400).toFixed(0) + ' d'; };
-const KCLS = {route: 'kroute', skill: 'kskill', check: 'kcheck', fail: 'kfail', look: 'klook'};
-let callSig = '', callById = {}, instrById = {};
-const callEl = {}, grpEl = {};
-function actName(a) {
-  if (typeof a === 'string') return a;
-  if (!a || typeof a !== 'object') return String(a);
-  const n = a.action || a.type || a.kind || '?', sub = a.skill || a.name;
-  return sub && sub !== n ? `${n}:${sub}` : n;
-}
-function summary(c) {
-  if (c.error && c.output == null) return c.error;
-  const o = c.output;
-  if (o == null) return '';
-  if (typeof o === 'string') return o.slice(0, 100);
-  const acts = Array.isArray(o) ? o : o.actions || o.steps || o.plan;
-  if (Array.isArray(acts)) return acts.map(actName).join(' → ');
-  if (o.action) return actName(o);
-  return JSON.stringify(o).slice(0, 100);
-}
-const instrText = id => callById[id]?.instructions ?? instrById[id];
-function detail(c) {
-  const d = document.createElement('div'); d.className = 'det';
-  let h = '';
-  if (c.instructions) {
-    if (String(c.instructions).startsWith('=')) {
-      const ref = c.instructions.slice(1), txt = instrText(ref);
-      h += `<details><summary>instructions: same as call ${esc(ref)} (${txt == null ? 'not loaded' : txt.length + ' chars'})</summary>${txt == null ? '' : `<pre>${esc(txt)}</pre>`}</details>`;
-    } else h += `<details><summary>instructions (${c.instructions.length} chars)</summary><pre>${esc(c.instructions)}</pre></details>`;
-  }
-  const imgs = [];
-  (c.input || []).forEach((p, i) => {
-    if (p.text != null) h += `<div><div class="lb">input ${i}</div><pre>${esc(p.text)}</pre></div>`;
-    else if (p.image) imgs.push(`<a href="/along/calls/${encodeURIComponent(p.image)}" target="_blank"><img loading="lazy" src="/along/calls/${encodeURIComponent(p.image)}" alt="${esc(p.label || '')}">${esc(p.label || p.image)}</a>`);
-    else if ('image' in p) imgs.push(`<span class="lb">${esc(p.label || 'image')}: not saved</span>`);
-  });
-  if (imgs.length) h += `<div><div class="lb">images</div><div class="thumbs">${imgs.join('')}</div></div>`;
-  if (c.output != null) h += `<div><div class="lb">output</div><pre>${esc(typeof c.output === 'string' ? c.output : JSON.stringify(c.output, null, 1))}</pre></div>`;
-  if (c.error) h += `<div class="er">${esc(c.error)}</div>`;
-  h += `<div class="ids">${esc(c.id)} · ${esc(c.model || '')} ${esc(c.tier || '')} · prev ${esc(c.prev || '-')} · resp ${esc(c.resp || '-')}</div>`;
-  d.innerHTML = h; return d;
-}
-function callNode(c) {
-  const el = document.createElement('div'); el.className = 'call' + (c.error ? ' err' : '');
-  const u = c.usage || {}, tok = u.input == null ? '' : `${u.input}/${u.cached ?? 0}/${u.output ?? 0}`;
-  el.innerHTML = `<div class="cr"><span class="t">${hm(c.t)}</span><span class="k ${KCLS[c.kind] || 'kother'}">${esc(c.kind)}</span><span class="n">${c.secs ?? ''}s</span><span class="n" title="tokens in / cached / out">${tok}</span><span class="s">${esc(summary(c))}</span></div>`;
-  el.firstChild.onclick = () => { if (el.det) { el.det.hidden = !el.det.hidden; } else { el.det = detail(c); el.appendChild(el.det); } };
-  return el;
-}
-function grpNode(key) {
-  const g = document.createElement('div'); g.className = 'grp';
-  g.innerHTML = '<div class="gh"></div><div class="gb"></div>';
-  g.firstChild.onclick = () => { const b = g.lastChild; b.hidden = !b.hidden; };
-  return g;
-}
-async function pollCalls() {
-  try {
-    const d = await (await fetch('/along/calls.json?' + new URLSearchParams({n: 60, sig: callSig}), {cache: 'no-store'})).json();
-    if (d.error) $('callstat').textContent = 'calls: ' + d.error;
-    else if (!d.same) {
-      callSig = d.sig; instrById = d.instr || {}; callById = {};
-      d.calls.forEach(c => callById[c.id] = c);
-      const groups = new Map();                     // newest first: groups ordered by their newest call
-      d.calls.slice().reverse().forEach(c => { const k = c.episode ?? ''; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); });
-      const box = $('calls'), keepG = new Set(), keepC = new Set();
-      for (const [k, cs] of groups) {
-        keepG.add(k);
-        const g = grpEl[k] || (grpEl[k] = grpNode(k)), ep = d.episodes?.[k];
-        const tot = cs.reduce((a, c) => a + (c.secs || 0), 0);
-        g.firstChild.innerHTML = k === '' ? `<span>no episode</span><span class="lb">${cs.length} calls</span>`
-          : `<span class="st ${esc(ep?.status || '')}">${esc(ep?.status || 'episode')}</span><span class="rq">${esc(ep?.request || k)}</span><span style="color:var(--dim);font-size:11px">${cs.length} calls · ${tot.toFixed(1)} s</span>`;
-        box.appendChild(g);
-        for (const c of cs) { keepC.add(c.id); g.lastChild.appendChild(callEl[c.id] || (callEl[c.id] = callNode(c))); }
-      }
-      for (const k in grpEl) if (!keepG.has(k)) { grpEl[k].remove(); delete grpEl[k]; }
-      for (const id in callEl) if (!keepC.has(id)) { callEl[id].remove(); delete callEl[id]; }
-      if (!d.calls.length) box.innerHTML = '<span class="lb">no model calls logged yet</span>';
-      else box.querySelector(':scope > .lb')?.remove();
-      $('callstat').textContent = `${d.calls.length} newest calls · tokens in/cached/out · click = details`;
-    }
-  } catch (e) { $('callstat').textContent = 'calls: unreachable'; }
-  setTimeout(pollCalls, 3000);
-}
-pollCalls();
-// ---- Actions table: built-ins + learned skills (skills.listing()) ----
-const openSk = new Set(); let skSig = '';
-function stats(s) {
-  if (!s) return '';
-  const last = Math.max(s.last_patch || 0, s.created || 0);
-  return `${s.uses ?? 0} uses · <span class="w">✓${s.wins ?? 0}</span> <span class="f">✗${s.fails ?? 0}</span> · ${s.patches ?? 0} patches${last ? ' · changed ' + ago(last) + ' ago' : ''}${s.last_used ? ' · used ' + ago(s.last_used) + ' ago' : ''}`;
-}
-const args = a => !a ? '' : typeof a === 'string' ? a : Array.isArray(a) ? a.map(x => typeof x === 'string' ? x : x.name || JSON.stringify(x)).join(', ') : Object.keys(a).join(', ');
-function renderSkills(d) {
-  if (d.error) { $('actsb').innerHTML = `<tr><td colspan="3" style="color:var(--dim)">skills: unavailable (${esc(d.error)})</td></tr>`; return; }
-  let h = (d.builtins || []).map(b => `<tr><td class="nm">${esc(b.name)}<span class="tag d">built-in</span></td><td>${esc(b.use_when || '')}${b.args ? `<div class="ar">${esc(args(b.args))}</div>` : ''}</td><td></td></tr>`).join('');
-  for (const s of d.skills || []) {
-    const op = openSk.has(s.name);
-    h += `<tr class="sk" data-n="${esc(s.name)}"><td class="nm">${op ? '▾' : '▸'} ${esc(s.name)}<span class="tag">learned</span>${s.direct ? '<span class="tag d">direct</span>' : ''}</td><td>${esc(s.use_when || '')}${s.args ? `<div class="ar">${esc(args(s.args))}</div>` : ''}</td><td style="font-size:11px;min-width:120px">${stats(s.stats)}</td></tr>`;
-    if (op) h += `<tr class="body"><td colspan="3"><div class="lb" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px"><span style="color:var(--dim);font-size:11px">${esc(s.path || '')} · ${(s.history || []).length} snapshots</span><button data-undo="${esc(s.name)}" ${(s.history || []).length ? '' : 'disabled'}>Undo last change</button></div><pre>${esc(s.body || '')}</pre></td></tr>`;
-  }
-  $('actsb').innerHTML = h || '<tr><td colspan="3">no actions</td></tr>';
-  $('skstat').textContent = `${(d.builtins || []).length} built-in · ${(d.skills || []).length} learned · click a learned one`;
-}
-let skData = null;
-$('actsb').onclick = e => {
-  const u = e.target.closest('[data-undo]');
-  if (u) { if (confirm(`Undo the last change to skill "${u.dataset.undo}"?`)) doit('skill-undo', u.dataset.undo).then(() => setTimeout(pollSkills, 800, true)); return; }
-  const r = e.target.closest('tr.sk'); if (!r) return;
-  const n = r.dataset.n; openSk.has(n) ? openSk.delete(n) : openSk.add(n);
-  if (skData) renderSkills(skData);
-};
-async function pollSkills(once) {
-  try {
-    const t = await (await fetch('/along/skills.json', {cache: 'no-store'})).text();
-    if (t !== skSig) { skSig = t; skData = JSON.parse(t); renderSkills(skData); }
-  } catch (e) { $('actsb').innerHTML = '<tr><td colspan="3" style="color:var(--dim)">skills: unavailable</td></tr>'; skSig = ''; }
-  if (!once) setTimeout(pollSkills, 5000);
-}
-pollSkills();
 </script></body></html>

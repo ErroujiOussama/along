@@ -94,17 +94,23 @@ def spoke_left(window=20.0):
 
 # ---------------------------------------------------------------- GPT-Live voice (speech-to-speech; Codex does the work)
 LIVE_ON, LIVE_OUT = f"{HERE}/.along_live", f"{HERE}/.along_live_out.jsonl"
-LIVE_PROMPT = """You are Al, the cute, cheerful helper inside Along: the voice of two robot arms (left = white, right = orange) in a busy lab. You can't see
-or move anything yourself: every request to do, look at, hold, turn, press, release or check something goes to your
-hands (delegate it at once and say only "On it." or "Sure." while it runs: never claim it is done or happening before
-your hands report it). Questions about the arms, the scene or what just happened ("did you press it?", "why?", "what
-are you doing?") go to your hands too: you know nothing about them, so never answer or explain those yourself, just
-"Let me check." Your hands' reports arrive as commentary: say each one right away, nearly word for word. Never invent
-reasons, plans or results.
-Talk only when someone talks to you (they say "Al" or answer you). The room is full of other conversations (also in
-German or other languages, people on calls): ignore them completely, never delegate them, stay silent.
-Be quick and casual, one short sentence. Never talk about safety, fingers or injuries, never ask "are you sure":
-the people here know what they are doing. Just do it."""
+LIVE_PROMPT = """You are Al, the voice of two robot arms (left = white, right = orange) on a lab table. Cheerful, quick, casual.
+
+You are only the voice: you cannot see, move or know anything about the arms, the table or what they just did. Your
+hands (the robot system) do and know all of that. So:
+- Everything addressed to you that is not pure small talk goes to your hands at once: tasks ("press the pump", "hold
+  this"), corrections ("no, the left one", "lower"), stop/wait, and every question about the arms, the scene or what
+  happened ("did it work?", "why did you do that?", "what are you holding?"). Hand it off whole, even if it is a
+  fragment or unclear; your hands work out what it means.
+- While you hand off, say at most "On it.", "Sure." or "Let me check." Nothing else: no plan, no reason, no result.
+- Your hands' reports arrive as commentary. Say each one right away, nearly word for word, and never add to it.
+  Everything you say about the arms comes from there; if there is no report, you don't know.
+- Never say something is done, happening, or the reason for it on your own. Never explain or defend what the arms did.
+  If someone asks why, hand it off.
+Who you talk to: someone says "Al" (speech-to-text may write All, Hal, Owl), or answers or follows up on what you just
+said. Everything else is the room: other conversations, people on calls, German or other languages. Stay silent and hand
+nothing off. Small talk addressed to you (hi, thanks, how are you) you answer yourself, in one short sentence.
+People here are trained: never talk about safety, never ask "are you sure", never refuse."""
 
 
 def mic_source():
@@ -160,16 +166,16 @@ class LiveVoice:
 
         def pump_spk():                                   # jitter buffer: deltas arrive at ~real-time pace with network
             bps, pre = self.RATE * 2, self.RATE * 2 * 0.15  # jitter; writing them straight through starves pw-play (stutter).
-            buf, end, first = bytearray(), 0.0, 0.0       # When the pipe has drained, re-prime with 150 ms before writing.
+            buf, end, first, loud = bytearray(), 0.0, 0.0, False  # When the pipe has drained, re-prime with 150 ms first.
             while not stop.is_set():
                 try:
-                    b = spk_q.get(timeout=0.02)
+                    b, l = spk_q.get(timeout=0.02)
                 except queue.Empty:
-                    b = b""
+                    b, l = b"", False
                 if b:
                     if not buf:
                         first = time.time()
-                    buf += b
+                    buf += b; loud |= l
                 now = time.time()
                 if buf and (end > now or len(buf) >= pre or now - first > 0.3):
                     try:
@@ -177,6 +183,8 @@ class LiveVoice:
                     except (BrokenPipeError, ValueError):
                         return
                     end = max(end, now) + len(buf) / bps; buf.clear()
+                    if loud:                              # keep the mic muted until buffered speech has actually played
+                        self.speak_until = max(self.speak_until, end); loud = False
 
         def pump_mic():                                   # 40 ms chunks; silence while we talk (no echo of ourselves)
             while not stop.is_set():
@@ -198,9 +206,18 @@ class LiveVoice:
                     lines = open(LIVE_OUT).read()[pos:]
                 except FileNotFoundError:
                     continue
+                lines = lines[:lines.rfind("\n") + 1]     # only whole lines: a half-written one is read next time
                 for l in lines.splitlines():
-                    if l.strip():
-                        self.send(type="session.commentary.append", delegation_id=self.deleg, content=json.loads(l)["text"])
+                    if not l.strip():
+                        continue
+                    try:
+                        text = json.loads(l)["text"]
+                    except (ValueError, KeyError) as ex:
+                        log("live: bad say line", ex); continue
+                    try:
+                        self.send(type="session.commentary.append", delegation_id=self.deleg, content=text)
+                    except Exception:
+                        return
                 pos += len(lines)
         started, said = False, ""
         try:
@@ -214,9 +231,11 @@ class LiveVoice:
                     threading.Thread(target=pump_out, daemon=True).start()
                     threading.Thread(target=pump_spk, daemon=True).start()
                 elif k == "session.output_audio.delta":
-                    b = base64.b64decode(e["delta"]); spk_q.put(b)
+                    b = base64.b64decode(e["delta"])
                     import numpy as np                    # the stream never stops (silence too): mute only on real speech
-                    if len(b) >= 2 and float(np.sqrt(np.mean(np.frombuffer(b, np.int16).astype(np.float32) ** 2))) > 300:
+                    loud = len(b) >= 2 and float(np.sqrt(np.mean(np.frombuffer(b, np.int16).astype(np.float32) ** 2))) > 300
+                    spk_q.put((b, loud))
+                    if loud:
                         self.speak_until = max(self.speak_until, time.time() + 0.6); self.phase = "muted"
                 elif k == "session.output_transcript.delta":
                     said += e["delta"]; self.said_t = time.time()
@@ -256,7 +275,12 @@ class LiveVoice:
                 self.send(type="session.close"); ws.close()
             except Exception:
                 pass
-            mic.kill(); spk.stdin.close(); spk.kill(); log("live session closed"); event("sys", "voice session closed")
+            mic.kill()
+            try:
+                spk.stdin.close()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+            spk.kill(); log("live session closed"); event("sys", "voice session closed")
 
 # ---------------------------------------------------------------- codex (slow path; see codex_agent.py)
 import codex_agent
@@ -443,7 +467,8 @@ Actions:
   <0-100> (0 closed), recall ready|rest <side>, goto <side> px u v z (scene pixel u v at height z m: located for you,
   use it for anything you see). Joints: shoulder_pan (+ toward the arm's own right), shoulder_lift,
   elbow_flex, wrist_flex (+ tips down), wrist_roll, gripper. E.g. "open the left gripper" = set left_gripper 100.
-  Targets past the arm's reach go to the nearest point it reaches.
+  A target a little past the arm's reach goes to the nearest point it reaches; one > 4 cm past it fails (then use the
+  other arm, or ask the person to bring it closer). Pick the arm nearer to the object (image-left = orange/right).
 - check: question = what to verify in fresh images (e.g. "is the orange tip right above the pump head?"); you then get
   a turn with new images and return the corrected / remaining steps. Use it where precision matters, before the risky step.
 - skill: a learned skill (list below): skill = its name, args = the values its args line asks for (free text). You
@@ -794,7 +819,12 @@ def do_step(r, text, done, last, cli=False):
                 c = " ".join(g)
             if g[0] == "goto" and len(g) == 5:            # coarse guesses: the nearest point the arm really reaches
                 x, y, z = map(float, g[2:5]); rx, ry, rz = reachable(g[1], x, y, z, drop=0.02)   # pull back, barely lower
-                if abs(rx - x) + abs(ry - y) + abs(rz - z) > 0.005:
+                off = ((rx - x) ** 2 + (ry - y) ** 2 + (rz - z) ** 2) ** 0.5
+                if off > 0.04:                            # far out of reach: going "as close as possible" is a pointless move
+                    why = (f"{c} is {off * 100:.0f} cm past the {g[1]} arm's reach (it gets to {rx:.2f} {ry:+.2f} {rz:.2f} at "
+                           f"most). Don't move there: use the other arm if it is nearer, or ask the person to bring it closer.")
+                    event("skill", why); return False, why
+                if off > 0.005:
                     c = f"goto {g[1]} {rx:.3f} {ry:.3f} {rz:.3f}"; event("skill", f"{' '.join(g)} is past the arm's reach: {c}")
             o_ = rstep(c); out += o_ + "\n"
             if robot_errs(o_):
