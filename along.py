@@ -499,12 +499,13 @@ Actions:
   to rest.
 - stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").
 - step: a short direct move sequence for robot step, ';'-chained: goto <side> x y z (m, that arm's base frame: x forward,
-  y to the arm's left, z up, table z -0.02; >= 2 cm), goto <side> @u,v,h dz (the point at scene pixel u,v that is h cm
-  above the table, plus dz cm up: "goto left @564,262,18 5" = 5 cm above a pump top at 18 cm), move <side>_<joint> <deg> (relative, >= 5), set <side>_gripper
+  y to the arm's left, z up, table z -0.02; >= 2 cm), goto <side> @u,v,h,d dz (the point at scene pixel u,v that is h cm
+  above the table and d cm from the scene camera, plus dz cm up: "goto left @564,262,18,52 5" = 5 cm above a pump top),
+  move <side>_<joint> <deg> (relative, >= 5), set <side>_gripper
   <0-100> (0 closed), recall ready|rest <side>. Joints: shoulder_pan (+ toward the arm's own right), shoulder_lift,
   elbow_flex, wrist_flex (+ tips down), wrist_roll, gripper. E.g. "open the left gripper" = set left_gripper 100.
 - check: what = what should be true now (e.g. "left jaws right above the pump top"). You then get fresh images and
-  return the remaining steps, corrected if needed. Only before a move where a few cm matter (pressing, grasping).
+  return the remaining steps, corrected if needed (relative to where the tips are now: nudge, or goto). Only before a move where a few cm matter (pressing, grasping).
 - answer: only talk: questions about the scene, the arms, greetings. say = the answer.
 - ask: ask the person to help (say = the request, e.g. "Can you bring it a bit closer?"); the sequence ends there.
 - codex: only when the person asks Al to take its time / go slow / think it through: codex_prompt = a
@@ -518,8 +519,9 @@ say = what Al says when that step is done: ONE short sentence ("Done.", "Here yo
 (the hold reports itself). object: u, v = pixel in the scene image (800x450) of the point to grab (a long thing: the
 middle of its handle, not the bristles/head), dist_cm = its distance from the scene camera, height_cm = its height above
 the table, pose = "upright" or "flat" (held horizontally), axis_deg = its long axis in the scene image (0 horizontal,
-90 vertical). Scale: the scene camera is 33 cm above the table and 70 cm from each arm base (bases 21 cm apart); the
-scene camera faces the arms: the orange/right arm is on image-left. Wrist images look out between each arm's jaws."""
+90 vertical). The scene image marks each gripper tip (L/R cross with its xyz): known points to measure against.
+Scale: the scene camera is 33 cm above the table and 70 cm from each arm base (bases 21 cm apart); the scene camera
+faces the arms: the orange/right arm is on image-left. Wrist images look out between each arm's jaws."""
 
 STEP_SCHEMA = {"type": "object", "additionalProperties": False,
     "required": ["action", "side", "what", "deg", "step", "object", "say", "codex_prompt", "codex_fresh"],
@@ -545,15 +547,51 @@ PLAN = {"gen": 0}                                           # bumped by every ne
 
 
 def frames(cams=("scene", "left", "right")):
-    """Live camera thumbs as (label, data URL) (scene = the 800x450 tile, so pixels go straight into locate)."""
+    """Live camera thumbs as (label, data URL) (scene = the 800x450 tile, so pixels go straight into locate). The scene
+    image marks each gripper tip (FK + calibration) with its xyz: a known reference to judge offsets against."""
     from so101 import Robot
     bot, out = Robot(), []
     for c in cams:
         try:
-            out.append((f"{c} camera", llm.image_url(bot.thumb(c, *((W, H) if c == "scene" else (640, 360))))))
+            img = bot.thumb(c, *((W, H) if c == "scene" else (640, 360)))
+            if c == "scene":
+                img = img.copy()
+                try:
+                    mark_tips(bot, img)
+                except Exception as e:
+                    log("frames: no tip marks", e)
+            out.append((f"{c} camera", llm.image_url(img)))
         except Exception as e:
             log("frames: no", c, e)
     return out
+
+
+def mark_tips(bot, img):
+    import cv2, numpy as np, calib, collide
+    s, c = collide.setup(), calib.cam_now()
+    for side, col in (("left", (255, 255, 255)), ("right", (0, 140, 255))):
+        t = getattr(bot, side).tip()
+        u, v = calib.project(c, [(collide.base_T(side, s) @ np.r_[t, 1.0])[:3]])[0]
+        if 0 <= u < W and 0 <= v < H:
+            p = (int(u), int(v)); txt = f"{side[0].upper()} tip {t[0]:.2f} {t[1]:+.2f} {t[2]:.2f}"
+            cv2.drawMarker(img, p, (0, 0, 0), cv2.MARKER_CROSS, 18, 4); cv2.drawMarker(img, p, col, cv2.MARKER_CROSS, 18, 2)
+            (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+            x0 = min(p[0] + 8, W - tw - 4); y0 = p[1] + (22 if side == "left" else -10)   # labels apart: never overlap
+            cv2.rectangle(img, (x0 - 2, y0 - th - 3), (x0 + tw + 2, y0 + 3), (0, 0, 0), -1)
+            cv2.putText(img, txt, (x0, y0), cv2.FONT_HERSHEY_SIMPLEX, 0.4, col, 1)
+
+
+def pixel_xyz(side, u, v, h_cm, d_cm=None):
+    """Scene pixel + height above the table (+ distance from the scene camera, if given: the two are averaged) -> xyz in
+    side's base frame (m)."""
+    import numpy as np, calib
+    from so101 import Robot
+    z = h_cm / 100 - 0.02
+    if d_cm:
+        c = calib.cam_now(); f, up = np.array(c["forward"]), np.array(c["up"]); r = np.cross(f, up)
+        d = f + r * (u - W / 2) / c["focal_px"] - up * (v - H / 2) / c["focal_px"]
+        z = (z + c["position"][2] + d[2] / np.linalg.norm(d) * d_cm / 100) / 2
+    return Robot().locate(u, v, z)[side]
 
 
 def recent():
@@ -690,11 +728,10 @@ def do_step(r, text, done, rest, last):
         if not cmds or any(c.split()[0] not in ("goto", "move", "set", "recall", "nudge") for c in cmds):
             return f"step '{r.get('step')}': only goto, move, set, recall, nudge"
         for i, c in enumerate(cmds):                      # goto <side> @u,v,h dz: scene pixel -> xyz (robot locate)
-            m = re.fullmatch(r"goto (left|right) @([\d.]+),([\d.]+),(-?[\d.]+)(?:\s+([+-]?[\d.]+))?", c)
+            m = re.fullmatch(r"goto (left|right) @([\d.]+),([\d.]+),(-?[\d.]+)(?:,([\d.]+))?(?:\s+([+-]?[\d.]+))?", c)
             if m:
-                from so101 import Robot
-                x, y, z = Robot().locate(float(m[2]), float(m[3]), float(m[4]) / 100 - 0.02)[m[1]]
-                cmds[i] = f"goto {m[1]} {x:.3f} {y:.3f} {z + float(m[5] or 0) / 100:.3f}"
+                x, y, z = pixel_xyz(m[1], float(m[2]), float(m[3]), float(m[4]), m[5] and float(m[5]))
+                cmds[i] = f"goto {m[1]} {x:.3f} {y:.3f} {z + float(m[6] or 0) / 100:.3f}"
         args = None
     else:
         return True
