@@ -89,13 +89,12 @@ def chime(freq=660, dur=0.12):
                     f"sine=frequency={freq}:duration={dur}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def tones(f1, f2, vol=0.35):
-    """Two short tones in the background: rising (660 -> 990 Hz) = Al is on, falling = Al is off."""
+def tone(freq, vol=0.35):
+    """One short beep in the background: 880 Hz = Al is on, 660 Hz = Al is off."""
     import numpy as np
-    r = LiveVoice.RATE; t = np.arange(int(r * 0.11)) / r                # same raw format as GPT-Live's speaker stream
+    r = LiveVoice.RATE; t = np.arange(int(r * 0.12)) / r                # same raw format as GPT-Live's speaker stream
     env_ = np.minimum(1, np.minimum(t, t[-1] - t) / 0.01)            # 10 ms fade in/out: no clicks
-    gap = np.zeros(int(r * 0.03))
-    pcm = (np.concatenate([np.sin(2 * np.pi * f1 * t) * env_, gap, np.sin(2 * np.pi * f2 * t) * env_]) * vol * 32767)
+    pcm = np.sin(2 * np.pi * freq * t) * env_ * vol * 32767
 
     def play():
         subprocess.run(["pw-play", "--raw", "--rate", str(r), "--channels", "1", "--format", "s16", "-"],
@@ -928,9 +927,9 @@ def run_manual():
         t, want = time.time(), os.path.exists(ON)
         if want and not on:
             on = True; log("ON"); event("wake", "switched on")
-            tones(660, 990); mic.on.set()
+            tone(880); mic.on.set()
         elif on and not want:
-            on = False; mic.on.clear(); log("OFF"); event("idle", "switched off"); tones(990, 660)
+            on = False; mic.on.clear(); log("OFF"); event("idle", "switched off"); tone(660)
             interrupt_codex()                                         # off = interrupt Codex + no voice; arms stay put
         json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
                    "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
@@ -976,14 +975,14 @@ def run():
                      and "something new at " + ", ".join(f"scene px ({d['px'][0]},{d['px'][1]})" for d in new)) or ", ".join(arms)
             log("WAKE:", names, [d.get("label") for d in new]); event("wake", names)
             say("Hi, I'm Al. Need a hand?")
-            tones(660, 990); mic.on.set()
+            tone(880); mic.on.set()
             tell(f"[along] Woke up: {names} (the cheap detector only says where; look at the image yourself to see what it is). "
                  "I already greeted them and asked if they need a hand; the mic is on "
                  "while an object of interest is in the scene or in the jaws. Wait for their [voice] request.")
         elif active and not why:
             active = False
             mic.on.clear()                                 # nothing of interest: no voice commands go through
-            log("back to idle"); event("idle"); tones(990, 660)
+            log("back to idle"); event("idle"); tone(660)
             tell("[along] Back to idle: no new object in the scene and nothing in the jaws; the mic is off. "
                  "Park the arms (robot step \"recall rest\"), silently.")
         json.dump({"t": t, "active": active, "why": why, "listening": mic.on.is_set(), "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy,
