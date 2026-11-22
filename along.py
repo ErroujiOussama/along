@@ -871,7 +871,7 @@ def confirm_episode():
             LEARN.update(names=[n for n, _ in ch], summary=summary, t=time.time())
             json.dump(LEARN, open(LEARN_F, "w"))          # a restart before the answer undoes it (learn_pending)
             say(f"I'd remember this for next time: {summary.rstrip('.')}. Should I keep it?")
-            threading.Timer(LEARN_WAIT, learn_answer, (None,)).start()
+            t_ = LEARN["t"]; threading.Timer(LEARN_WAIT, lambda: LEARN.get("t") == t_ and learn_answer(None)).start()
     codex_agent.fork(task, on_event=event, on_done=finished)
 
 
