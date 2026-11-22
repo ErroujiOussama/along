@@ -533,8 +533,8 @@ correct it in say when it told the person something wrong.
 
 episode = how the request relates to the open episode (the goal being worked on, given in the context): "new" (a new
 goal, or none is open), "continue" (same goal: retry, a correction, "now the other arm"), "confirm" (the person says it
-worked: "yes", "perfect", "thanks, that worked"), "deny" (it didn't: "no", "you missed"; then
-fix it, usually codex continuing), "none" (chatter, questions, small talk). In later turns of the conversation: "continue".
+worked: "yes", "perfect", "thanks, that worked"), "deny" (it didn't: "no", "you missed"),
+"none" (chatter, questions, small talk). In later turns of the conversation: "continue".
 
 say = what Al says when that step is done: ONE short sentence ("Done.", "Here you go.", an answer of at most ~12 words), or
 "" for nothing (in a sequence usually only the last step speaks; a last step with "" says "Done."). For hold leave it ""
@@ -861,8 +861,8 @@ def confirm_episode():
                 body = open(f"{HERE}/skills/{n}/SKILL.md").read()
             except FileNotFoundError:
                 continue
-            if len([l for l in body.splitlines() if l.strip()]) > 15 or "## Lessons" in body:
-                event("error", f"skill {n} breaks the limits (> 15 lines or a Lessons section): check it, "
+            if len([l for l in body.splitlines() if l.strip()]) > 14 or "## Lessons" in body:
+                event("error", f"skill {n} breaks the limits (> 14 lines or a Lessons section): check it, "
                                f"or undo with along skill-undo {n}")
         if ch:                                            # nothing is kept unless the person says yes
             m = re.search(r"^(?:created|patched) [\w-]+:\s*(.+)$", reply or "", re.M)
