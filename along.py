@@ -480,8 +480,8 @@ def watch(mic):
 
 
 # ---------------------------------------------------------------- router: one fast vision+decision call per request
-ROUTE_PROMPT = """You are the fast router of Al, two SO-101 robot arms (left = white, right = orange) on a lab table, run by
-voice. A voice model talks to people and hands you each request (speech-to-text: may be garbled or carry room chatter
+ROUTE_PROMPT = """You are Al's brain and hands: you drive two SO-101 robot arms (left = white, right = orange) on a lab table
+yourself, step by step, from the camera images, until each request is done. A voice model talks to people and hands you each request (speech-to-text: may be garbled or carry room chatter
 before it; act on the last thing said to Al). You get the camera images, the arm state and the recent conversation.
 Return actions = the steps in order: usually one; a sequence when the request needs several ("hold this and turn it" =
 hold, turn; "take it and put it in the cup" = hold, codex). Each step starts when the previous one succeeded.
