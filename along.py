@@ -499,7 +499,8 @@ Actions:
   (if visible; else null and the arm goes to a default spot).
 - release: side opens and goes back to ready (drops what it holds).
 - turn: wrist roll of side by deg (+/-; 90 = quarter turn). tilt: wrist flex by deg (+ tips down).
-- press: push straight down on a point (button, pump): object = that point, depth_cm (default 4, harder 6-8).
+- press: push straight down on a point (button, pump) and back up: object = that point, depth_cm (default 4, harder 6-8).
+  object null = straight down from where side's tip is now (once it is above the point, e.g. aligned with the wrist cam).
 - open: both grippers open (let go of everything). park: empty arms go to rest. reset: everything stops, both arms to rest.
 - stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").
 - step: a short direct move sequence for robot step, ';'-chained: goto <side> x y z (m, that arm's base frame: x forward,
@@ -1037,13 +1038,17 @@ def do_step(r, text, done, last, cli=False):
             h = rd_held(); side = next(iter(h)) if len(h) == 1 else "right"
         args = [a, side] + ([str(r.get("deg") or 90)] if a != "release" else [])
     elif a == "press":
-        if not o:
-            return False, "press needs object (the point to press, as scene pixel + height)"
         from so101 import Robot
-        h = (o.get("height_cm") or 0) / 100 - 0.02
-        loc = Robot().locate(o["u"], o["v"], h)
-        side = side if side in ("left", "right") else min(("left", "right"), key=lambda sd: loc[sd][0] ** 2 + loc[sd][1] ** 2)
-        x, y, z = loc[side]
+        if o and o.get("u") is not None:
+            h = (o.get("height_cm") or 0) / 100 - 0.02
+            loc = Robot().locate(o["u"], o["v"], h)
+            side = side if side in ("left", "right") else min(("left", "right"), key=lambda sd: loc[sd][0] ** 2 + loc[sd][1] ** 2)
+            x, y, z = loc[side]
+        elif side in ("left", "right"):                   # no pixel (out of the scene view): straight down from the tip
+            x, y, tz = getattr(Robot(), side).tip()
+            z = (o["height_cm"] / 100 - 0.02) if o and o.get("height_cm") is not None else tz - 0.04
+        else:
+            return False, "press needs object (scene pixel + height) or a side whose tip is above the point"
         if geo_off(x, y, z + 0.04) > 0.04:
             return out_of_reach(side, x, y, z, f"press at {x:.2f} {y:+.2f} {z:.2f} is past the {side} arm's reach", say, cli)
         args = ["press", side, *(f"{v:.3f}" for v in loc[side]), str(r.get("depth_cm") or 4)]
@@ -1088,6 +1093,10 @@ def do_step(r, text, done, last, cli=False):
                     tip = getattr(Robot(), g[1]).tip()
                     if sum((a - b) ** 2 for a, b in zip(tip, (rx, ry, rz))) ** 0.5 < 0.02:   # already at the limit: can't get closer
                         return out_of_reach(g[1], x, y, z, f"{c}: the {g[1]} arm is already at its limit", say, cli)
+                    if ((rx - x) ** 2 + (ry - y) ** 2) ** 0.5 > 0.015:   # it would land beside the target: not a move to make
+                        return False, (f"`{' '.join(g)}` is past the {g[1]} arm's reach: at that height it gets only to "
+                                       f"{rx:.2f} {ry:+.2f}. Nothing moved. Lower is shorter for this arm; if the target is "
+                                       f"there, it is out of reach.")
                     c = f"goto {g[1]} {rx:.3f} {ry:.3f} {rz:.3f}"; event("skill", f"{' '.join(g)} is past the arm's reach: {c}")
                     clamped.append(f"{' '.join(g)} was past the arm's reach: it stopped at its limit {rx:.2f} {ry:+.2f} {rz:.2f}")
             o_ = rstep(c)
