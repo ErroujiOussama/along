@@ -567,8 +567,10 @@ def handle(parts):
             q = np.array([target[f"{side}_{j}"] for j in J])
         T0 = K.forward_kinematics(q); start = T0[:3, 3].copy(); n = max(int(np.linalg.norm(xyz - start) / 0.005), 1)
         dist = float(np.linalg.norm(xyz - start))
+        if dist < MIN_FIX:                         # already there (within 1 cm): nothing to move
+            return {"waypoints": 0, "path": "already there"}
         if MIN_MOVE and dist < MIN_GOTO:
-            if dist < MIN_FIX or small_fix_used[side]:
+            if small_fix_used[side]:
                 raise ValueError(f"goto of {dist * 100:.1f} cm is too small: gotos are >= {MIN_GOTO * 100:.0f} cm, plus ONE "
                                  f"{MIN_FIX * 100:.0f}-{MIN_GOTO * 100:.0f} cm fix per approach (used: {small_fix_used[side]}). "
                                  "No creeping: back off >= 2 cm and come in again with a better estimate")

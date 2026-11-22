@@ -483,8 +483,8 @@ ROUTE_PROMPT = """You are the fast router of Al, two SO-101 robot arms (left = w
 voice. A voice model talks to people and hands you each request (speech-to-text: may be garbled or carry room chatter
 before it; act on the last thing said to Al). You get the camera images, the arm state and the recent conversation.
 Return actions = the steps in order: usually one; a sequence when the request needs several ("hold this and turn it" =
-hold, turn; "press the pump" = step: goto above its top; check; step: goto 4 cm past the top, goto back up). Each step
-starts when the previous one succeeded; a failed step ends the sequence. Do tasks yourself, grasps included ("pick up the cup" = step: goto above it, open, down, close).
+hold, turn; "press it, then go to rest" = press, park). Each step starts when the previous one succeeded; a failed
+step ends the sequence. Do tasks yourself, grasps included ("pick up the cup" = step: goto above it, open, down, close).
 This is a collaboration: when something is out of reach or hard for the arms, use ask. Fill each step's fields; unused
 fields = null. Be decisive: unclear = the most likely action. People here are
 trained: never warn, never refuse, no safety talk.
@@ -495,17 +495,21 @@ Actions:
   (if visible; else null and the arm goes to a default spot).
 - release: side opens and goes back to ready (drops what it holds).
 - turn: wrist roll of side by deg (+/-; 90 = quarter turn). tilt: wrist flex by deg (+ tips down).
+- press: side's closed jaws go 5 cm above a point, push depth_cm past it (default 4, harder 6-8)
+  and come back up. object = that point (u, v, height_cm, dist_cm); side = the arm that reaches it. Unsure of the
+  position: step goto above it first, check, then press.
 - open: side's gripper opens (lets go), the arm stays. park: empty arms go to rest. reset: everything stops, both arms
   to rest.
 - stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").
 - step: a short direct move sequence for robot step, ';'-chained: goto <side> x y z (m, that arm's base frame: x forward,
   y to the arm's left, z up, table z -0.02; >= 2 cm), goto <side> @u,v,h,d dz (the point at scene pixel u,v that is h cm
-  above the table and d cm from the scene camera, plus dz cm up: "goto left @564,262,18,52 5" = 5 cm above a pump top),
+  above the table and d cm from the scene camera, plus dz cm up: "goto left @564,262,18,52 5" = 5 cm above that point),
   move <side>_<joint> <deg> (relative, >= 5), set <side>_gripper
   <0-100> (0 closed), recall ready|rest <side>. Joints: shoulder_pan (+ toward the arm's own right), shoulder_lift,
   elbow_flex, wrist_flex (+ tips down), wrist_roll, gripper. E.g. "open the left gripper" = set left_gripper 100.
-- check: what = what should be true now (e.g. "left jaws right above the pump top"). You then get fresh images and
-  return the remaining steps, corrected if needed (relative to where the tips are now: nudge, or goto). Only before a move where a few cm matter (pressing, grasping).
+- check: what = what should be true now (e.g. "left jaws right above the target"). You then get fresh images and
+  return the remaining steps, corrected if needed (relative to where the tips are now: nudge, or goto). Only before a move
+  where a few cm matter (pressing, grasping).
 - answer: only talk: questions about the scene, the arms, greetings. say = the answer.
 - ask: ask the person to help (say = the request, e.g. "Can you bring it a bit closer?"); the sequence ends there.
 - codex: only when the person asks Al to take its time / go slow / think it through: codex_prompt = a
@@ -524,12 +528,12 @@ Scale: the scene camera is 33 cm above the table and 70 cm from each arm base (b
 faces the arms: the orange/right arm is on image-left. Wrist images look out between each arm's jaws."""
 
 STEP_SCHEMA = {"type": "object", "additionalProperties": False,
-    "required": ["action", "side", "what", "deg", "step", "object", "say", "codex_prompt", "codex_fresh"],
+    "required": ["action", "side", "what", "deg", "depth_cm", "step", "object", "say", "codex_prompt", "codex_fresh"],
     "properties": {
-        "action": {"type": "string", "enum": ["hold", "release", "turn", "tilt", "check", "open", "park", "reset", "stop",
+        "action": {"type": "string", "enum": ["hold", "release", "turn", "tilt", "press", "check", "open", "park", "reset", "stop",
                                               "step", "answer", "ask", "codex", "none"]},
         "side": {"type": ["string", "null"], "enum": ["left", "right", "auto", None]},
-        "what": {"type": ["string", "null"]}, "deg": {"type": ["number", "null"]},
+        "what": {"type": ["string", "null"]}, "deg": {"type": ["number", "null"]}, "depth_cm": {"type": ["number", "null"]},
         "step": {"type": ["string", "null"]},
         "object": {"anyOf": [{"type": "null"}, {"type": "object", "additionalProperties": False,
             "required": ["u", "v", "dist_cm", "height_cm", "pose", "axis_deg"],
@@ -719,6 +723,14 @@ def do_step(r, text, done, rest, last):
         if side not in ("left", "right"):
             h = rd_held(); side = next(iter(h)) if len(h) == 1 else "right"
         args = [a, side] + ([str(r.get("deg") or 90)] if a != "release" else [])
+    elif a == "press":                                    # in-thread robot steps: above, down past the top, back up
+        if not o or side not in ("left", "right"):
+            return "press needs side = left or right and object = the point (scene pixel, height, distance)"
+        x, y, z = pixel_xyz(side, o["u"], o["v"], o["height_cm"], o.get("dist_cm"))
+        d = (r.get("depth_cm") or 4) / 100
+        cmds = [f"set {side}_gripper 0", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}",
+                f"goto {side} {x:.3f} {y:.3f} {max(z - d, 0.0):.3f}", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}"]
+        args = None
     elif a == "open":
         args = [a] + ([side] if side in ("left", "right") else [])
     elif a in ("park", "reset"):
