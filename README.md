@@ -3,9 +3,9 @@
 Two SO-101 arms you talk to. Say what you need ("hold this toothbrush", "turn it so I can put toothpaste on",
 "press the soap") and Al does it, using three cameras and two grippers. Built at the Robotics & AI Hackathon, Berlin, 22 Nov 2026.
 
-[![Demo: soap, toothbrush, toothpaste (2 min)](docs/along-demo.jpg)](docs/along-demo.mp4)
+[![Demo: soap, toothbrush, toothpaste (2 min)](docs/along-demo.jpg)](https://github.com/jreiml/along/releases/download/demo/along-demo.mp4)
 
-▶ [docs/along-demo.mp4](docs/along-demo.mp4): press a soap dispenser, hold a toothbrush and toothpaste, turn the brush, hand it back.
+▶ [Watch the demo](https://github.com/jreiml/along/releases/download/demo/along-demo.mp4): press a soap dispenser, hold a toothbrush and toothpaste, turn the brush, hand it back.
 
 ## How it works
 
