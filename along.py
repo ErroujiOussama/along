@@ -134,12 +134,33 @@ hands (the robot system) do and know all of that. So:
 - While you hand off, say at most "On it.", "Sure." or "Let me check." Nothing else: no plan, no reason, no result.
 - Your hands' reports arrive as commentary. Say each one right away, nearly word for word, and never add to it.
   Everything you say about the arms comes from there; if there is no report, you don't know.
-- Never say something is done, happening, or the reason for it on your own. Never explain or defend what the arms did.
+- Never say something is done, happening, or the reason for it on your own (never "Pressed it.", "Got it.", "Done."
+  unless that exact report just arrived). Never explain or defend what the arms did.
   If someone asks why, hand it off.
 Who you talk to: someone says "Al" (speech-to-text may write All, Hal, Owl), or answers or follows up on what you just
 said. Everything else is the room: other conversations, people on calls, German or other languages. Stay silent and hand
 nothing off. Small talk addressed to you (hi, thanks, how are you) you answer yourself, in one short sentence.
 People here are trained: never talk about safety, never ask "are you sure", never refuse."""
+
+
+CLAIM = re.compile(r"\b(pressed|pushed|grabbed|picked|placed|put|moved|released|dropped|opened|closed|handed|turned|"
+                   r"lifted|poured|got it|done|finished|holding|it worked)\b", re.I)
+
+
+def invented(text):
+    """GPT-Live sometimes makes up a result ("Pressed the pump.") before the arms did anything. Anything it says that
+    claims an action and is not a report we sent in the last 20 s gets a spoken correction at once."""
+    t = " ".join(text.split())
+    if not CLAIM.search(t):
+        return
+    try:
+        recent = [json.loads(l) for l in open(EVENTS).readlines()[-40:] if l.strip()]
+    except FileNotFoundError:
+        recent = []
+    if any(e["kind"] == "say" and time.time() - e["t"] < 20 for e in recent):   # it is (re)phrasing a report: fine
+        return
+    event("sys", f"GPT-Live invented a result: {t[:160]}")
+    say("Sorry, scratch that: nothing has happened yet. I'm on it.")
 
 
 def mic_source():
@@ -304,7 +325,7 @@ class LiveVoice:
                     if self.phase == "muted":
                         self.phase = "listening"
                 if said.strip() and time.time() - self.said_t > 1.2 and time.time() > self.speak_until + 0.3:
-                    event("live", " ".join(said.split())); said = ""      # one line per reply (deltas come word by word)
+                    event("live", " ".join(said.split())); invented(said); said = ""   # one line per reply (deltas word by word)
         finally:
             stop.set()
             try:
@@ -836,7 +857,7 @@ def run_plan(steps, text, rid, gen, cli=False):
         if cli and any(s["action"] == "codex" for s in new):
             print(f"skill failed ({where}): {info}. Done: {'; '.join(done)}"); return False
         fr["steps"] = new
-    if codex_ran and EP["id"] and not cli:               # Codex had to do it: only the person can say whether it worked
+    if codex_ran and EP["id"] and EP["codex"] and not cli:               # Codex had to do it: only the person can say whether it worked
         last = codex_agent.state().get("last") or {}
         if last.get("ok") and EP["status"] != "asked":
             say("Did that work?"); episode("asked")
@@ -972,6 +993,21 @@ def out_of_reach(side, x, y, z, detail, say, cli):
     return False, None
 
 
+def arm_pose():
+    """Tips + grippers now (to tell whether Codex moved anything)."""
+    try:
+        from so101 import Robot
+        st = Robot().state()
+        return {k: v for k, v in st["measured"].items()}
+    except Exception:
+        return None
+
+
+def arm_moved(before):
+    after = arm_pose()
+    return before is None or after is None or any(abs(after[k] - before.get(k, after[k])) > 3 for k in after)
+
+
 PX_FAR = {}                                               # plan generation -> a px goto was already told it is out of box
 
 
@@ -997,11 +1033,15 @@ def do_step(r, text, done, last, cli=False):
         age = time.time() - STATE["t"]
         now = f"now: {STATE['text']}; snap_all.jpg {age:.0f} s old" if age < 30 else "arm state: run robot step"
         before = f"; already done for this request: {'; '.join(done)}" if done else ""
+        tips0 = arm_pose()
         tell(f"[task] {r.get('codex_prompt') or text}   || heard: {text}{before}; {now}; held {json.dumps(rd_held())}",
              fresh=bool(r.get("codex_fresh")), wait=True)
         last_ = codex_agent.state().get("last") or {}
         rep = " ".join(CODEX_HELD).strip(); CODEX_HELD.clear()
-        if last and last_.get("ok") and EP["id"] and not cli:   # one line: two in a row and GPT-Live drops the second
+        moved = arm_moved(tips0)                          # Codex only talked (asked for something): no "Did that work?"
+        if not moved:
+            EP["codex"] = False
+        if last and last_.get("ok") and moved and EP["id"] and not cli:   # one line: two in a row and GPT-Live drops the second
             say(f"{rep} Did that work?".strip()); episode("asked")
         elif rep:
             say(rep)
