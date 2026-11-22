@@ -9,7 +9,7 @@ one long-running Codex session (tmux "along", persona prompts/along.md) which ac
   along run --yolo       instead wake on the scene camera (new thing in the centre of the table)
   along idle             store what the scene shows now as the idle baseline (empty table + fixtures)
   along see              latest detections (label, conf, scene px in the 800x450 tile for `robot locate`)
-  along look "question"  ask GPT 6.1 terra about the current scene + wrist frames (~5 s): what is where, orientation,
+  along look "question"  ask GPT 6.1 sol (ultrafast) about the current scene + wrist frames (~2 s): what is where, orientation,
                          is it between the jaws. Scene px answers fit `robot locate`.
   along say "text"       have GPT-Live say this (only while switched on)
   along tell "text"      send a line to the Codex session (what the daemon does with speech)
@@ -524,7 +524,7 @@ def run():
 
 
 def look(question, cams=("scene", "left", "right")):
-    """Ask a vision model (GPT 6.1 terra through `codex exec`, ~5 s) about the newest frames. Scene is sent as the
+    """Ask a vision model (GPT 6.1 sol ultrafast via the API; `codex exec` without a key) about the newest frames. Scene is sent as the
     800x450 tile, so pixel answers go straight into `robot locate u v z`."""
     import cv2, tempfile
     from so101 import Robot
@@ -544,7 +544,8 @@ def look(question, cams=("scene", "left", "right")):
         content = [{"type": "input_text", "text": brief}] + [
             {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(open(p, "rb").read()).decode()} for p in imgs]
         r = requests.post("https://api.openai.com/v1/responses", headers={"Authorization": f"Bearer {env('OPENAI_API_KEY')}"},
-                          json={"model": env("ALONG_LOOK_MODEL", "gpt-6.1-terra"), "reasoning": {"effort": "low"},
+                          json={"model": env("ALONG_LOOK_MODEL", "gpt-6.1-sol"), "service_tier": env("ALONG_LOOK_TIER", "ultrafast"),
+                                "reasoning": {"effort": "low"},
                                 "input": [{"role": "user", "content": content}]}, timeout=60)
         r.raise_for_status()
         ans = "".join(c.get("text", "") for o in r.json().get("output", []) if o.get("type") == "message"
