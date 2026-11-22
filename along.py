@@ -1051,7 +1051,7 @@ def do_step(r, text, done, last, cli=False):
             return False, "press needs object (scene pixel + height) or a side whose tip is above the point"
         if geo_off(x, y, z + 0.04) > 0.04:
             return out_of_reach(side, x, y, z, f"press at {x:.2f} {y:+.2f} {z:.2f} is past the {side} arm's reach", say, cli)
-        args = ["press", side, *(f"{v:.3f}" for v in loc[side]), str(r.get("depth_cm") or 4)]
+        args = ["press", side, *(f"{v:.3f}" for v in (x, y, z)), str(r.get("depth_cm") or 4)]
     elif a in ("open", "park", "reset"):
         args = [a]
     elif a == "step":
