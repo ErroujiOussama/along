@@ -1108,9 +1108,6 @@ def do_step(r, text, done, last, cli=False):
         return False, f"`{what}`: {'robot error' if 'FAILED' in out else 'missed (nothing between the jaws)'}: " + " ".join(out.split())[-200:]
     if not ok:
         return False, f"`{what}` failed: " + " ".join(out.split())[-300:]
-    if args is None and any(re.fullmatch(r"set (left|right)_gripper 0", c) for c in cmds) and "HOLDING" not in out:
-        say("My jaws are closed, but there's nothing in them."); done.append(f"{what}: closed on nothing")
-        return True, None
     if speak:
         say(speak)
     done.append(f"{what}: done"); return True, None
