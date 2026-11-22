@@ -499,8 +499,7 @@ Actions:
 - turn: side's gripper rolls about the direction it points by deg (90 = quarter turn): + = clockwise seen from
   behind the gripper (from above when it points down); pointing at a person or the scene camera, + turns the top of
   what it holds toward image-left in the scene image, - toward image-right. tilt: only the gripper pivots at the wrist by deg:
-  + points it further down, - further up. The jaw tips are ~15 cm from that pivot, so they swing: tilting 90 from
-  pointing forward to pointing down drops them ~15 cm and pulls them ~15 cm back.
+  + points it further down, - further up.
 - press: side's closed jaws go 5 cm above a point, a check looks whether they are right above it, then they push down
   with full force and come back up. object = that point (u, v, height_cm, dist_cm): the middle of the part to push,
   not its front edge; height_cm = the height of its top: judge it against the tip markers (their z is printed);
