@@ -18,10 +18,18 @@ ERR = f"{HERE}/.along_codex.err"                         # stderr of the latest 
 EMPTY = {"thread": None, "pid": None, "task": "", "started": 0.0, "last": None}
 
 
+API_KEY = None                                           # set by along: OpenAI API key -> gpt-6.1-sol on the API, fast tier
+
+
 def flags():
-    """codex exec flags shared by fresh and resumed turns (resume takes no -C: the process runs in HERE)."""
-    return ["--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check",
-            "-m", os.environ.get("ALONG_MODEL", "gpt-6.1-terra"), "-c", "model_reasoning_effort=low",
+    """codex exec flags shared by fresh and resumed turns (resume takes no -C: the process runs in HERE).
+    With API_KEY: the OpenAI API as provider (key via env, the global Codex login stays untouched), gpt-6.1-sol, low
+    reasoning, Codex's Fast mode (service tier priority; ultrafast is not in Codex's tier list for the model).
+    Without: the ChatGPT login and gpt-6.1-terra."""
+    api = ["-c", 'model_providers.along_api={name="OpenAI API",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses"}',
+           "-c", "model_provider=along_api", "-c", f'service_tier="{os.environ.get("ALONG_CODEX_TIER", "priority")}"'] if API_KEY else []
+    return ["--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", *api,
+            "-m", os.environ.get("ALONG_MODEL", "gpt-6.1-sol" if API_KEY else "gpt-6.1-terra"), "-c", "model_reasoning_effort=low",
             "-c", "project_doc_max_bytes=0", "-c", 'web_search="disabled"',      # no AGENTS.md (the brief has it), no web
             "-c", "developer_instructions=" + json.dumps(open(BRIEF).read()),    # a JSON string is a valid TOML string
             *[x for f in ("hooks", "plugins", "apps", "multi_agent", "image_generation", "browser_use", "computer_use",
@@ -102,9 +110,12 @@ def run(task, fresh_ctx=False, on_event=lambda kind, text: None, on_reply=lambda
         on_event("codex", "turn stopped (a newer task replaces it)")
     if fresh_ctx:
         _save(thread=None)
+    prov = "api" if API_KEY else "chatgpt"
+    if state().get("provider") != prov:                  # a thread lives with its provider: switching starts fresh
+        _save(thread=None, provider=prov)
     thread = state()["thread"]
     cmd = ["codex", "exec", *(["resume"] if thread else []), *flags(), *([thread] if thread else []), "-"]
-    p = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(ERR, "w"),
+    p = subprocess.Popen(cmd, cwd=HERE, env={**os.environ, **({"OPENAI_API_KEY": API_KEY} if API_KEY else {})}, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(ERR, "w"),
                          text=True, start_new_session=True)       # own process group: interrupt kills it whole
     t0 = time.time()
     _save(pid=p.pid, task=task, started=t0)
