@@ -869,6 +869,7 @@ def confirm_episode():
             m = re.search(r"^(?:created|patched) [\w-]+:\s*(.+)$", reply or "", re.M)
             summary = (m.group(1).strip() if m else f"how to {ch[0][0].replace('-', ' ')}")[:160]
             LEARN.update(names=[n for n, _ in ch], summary=summary, t=time.time())
+            json.dump(LEARN, open(LEARN_F, "w"))          # a restart before the answer undoes it (learn_pending)
             say(f"I'd remember this for next time: {summary.rstrip('.')}. Should I keep it?")
             threading.Timer(LEARN_WAIT, learn_answer, (None,)).start()
     codex_agent.fork(task, on_event=event, on_done=finished)
@@ -878,9 +879,25 @@ LEARN = {}                                                # a learned skill chan
 LEARN_WAIT = 120                                          # s: no answer by then = not kept
 
 
+LEARN_F = f"{HERE}/.along_learn.json"
+
+
+def learn_pending():
+    """At start: a skill change still waiting for its yes (along restarted meanwhile) is undone."""
+    try:
+        LEARN.update(json.load(open(LEARN_F)))
+    except (FileNotFoundError, ValueError):
+        return
+    learn_answer(None)
+
+
 def learn_answer(keep):
     """keep: True = the person said yes; False = no; None = no answer in time (not kept either)."""
     names = LEARN.pop("names", None)
+    try:
+        os.remove(LEARN_F)
+    except FileNotFoundError:
+        pass
     if not names:
         return
     if keep:
