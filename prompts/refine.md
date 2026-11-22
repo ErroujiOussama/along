@@ -34,7 +34,12 @@ Writing rules:
 - Don't encode workarounds for errors from Al's own tools (refusals of its press/goto helpers): those get fixed in
   code; at most one line on what the error looked like.
 - Name by task class, not instance: "press-pump", "hand-over-tool", never "press-soap-at-0.31". Lowercase, dashes.
-- Never literal coordinates from this episode. Short: at most ~30 lines. Delete what turned out wrong.
+- Never literal coordinates from this episode, and nothing that only holds for this bottle, this spot or this
+  person: if it would not help the same task in a different setup, leave it out.
+- A skill must not keep growing. Hard limits: Strategy <= 5 sentences, at most 5 lessons, the whole file <= 20 lines.
+  A patch rewrites the skill as a whole: merge the new insight into an existing sentence or lesson, replace what it
+  supersedes, delete what turned out wrong or is no longer needed. If the skill was already at the limit, it must not
+  get longer; when in doubt, drop the least general lesson. A patch that only appends is wrong.
 - Edit only files under skills/ (never usage.json). Nothing else in the repo.
 
 SKILL.md format:

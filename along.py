@@ -812,6 +812,16 @@ def confirm_episode():
     def finished(reply):
         ch = skills.changes_since(snap)
         event("refine", "; ".join(f"skill {n} {k}" for n, k in ch) if ch else f"no skill change: {(reply or '')[:160]}")
+        for n, _ in ch:                                   # skills must not keep growing (prompts/refine.md limits)
+            try:
+                body = open(f"{HERE}/skills/{n}/SKILL.md").read()
+            except FileNotFoundError:
+                continue
+            lines = [l for l in body.splitlines() if l.strip()]
+            lessons = body.split("## Lessons", 1)[1].strip().splitlines() if "## Lessons" in body else []
+            if len(lines) > 25 or len([l for l in lessons if l.strip()]) > 5:
+                event("error", f"skill {n} is too long ({len(lines)} lines, {len(lessons)} lessons; limit 20 / 5): "
+                               f"check it, or undo with along skill-undo {n}")
     codex_agent.fork(task, on_event=event, on_done=finished)
 
 
