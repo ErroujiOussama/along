@@ -44,15 +44,16 @@ systemctl --user stop robotd     # park at rest, release torque
 
 ```bash
 systemctl --user start along   # daemon (along.service; link it like robotd.service): GPT-Live voice (C920 mic) while
-                               # switched on; it hands robot/vision requests to Al = one reused Codex session
-                               # (tmux `along` on the default server, brief prompts/along.md) and speaks Al's final reply
-along attach           # watch / type into Al's Codex session
+                               # switched on; each request goes to a fast router (gpt-6.1-sol: runs a skill itself) or
+                               # to Al = a headless `codex exec` turn (codex_agent.py, brief prompts/along.md, state
+                               # .along_codex.json, log .along_codex.log); Al's final reply is spoken
+along attach           # open Al's Codex conversation in the Codex TUI
 along on · along off   # (or the /along buttons); off = voice off + interrupt Al, arms stay put
 along open · along reset · along fresh   # release both grips · stop everything, both arms to rest · Codex back to only its brief (also /along buttons)
 along hold|release|turn|tilt|press|park ...   # one-call skills Al uses (see along.py --help)
 along look "where is the toothbrush?" · along tell "[voice] hold this"   # vision · type into Al's session
 ```
-Key: `OPENAI_API_KEY` in `.env`. Debug page: `robot stream` → `/along` (state, conversation, Codex pane, type-as-voice).
+Key: `OPENAI_API_KEY` in `.env`. Debug page: `robot stream` → `/along` (state, conversation, Codex turns, type-as-voice).
 `along run --yolo` = old mode, wakes on a new thing in the centre of the table (`along idle` first).
 
 ```python

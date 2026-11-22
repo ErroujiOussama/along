@@ -120,7 +120,7 @@ def _caps(qd):
 
 
 def along_api(h, u):
-    """Debug page for the along voice helper: /along, /along.json (state, detections, history, Codex pane),
+    """Debug page for the along voice helper: /along, /along.json (state, detections, history, Codex state + turn log),
     /along/scene.jpg (scene camera with the detector's boxes), /along/do?cmd=tell|say|wake|idle&text=..."""
     import subprocess
     from urllib.parse import parse_qsl
@@ -135,7 +135,8 @@ def along_api(h, u):
         ev = []
         if os.path.exists(f"{here}/.along_events.jsonl"):
             ev = [json.loads(l) for l in open(f"{here}/.along_events.jsonl").readlines()[-800:] if l.strip()]
-        pane = subprocess.run(["tmux", "-L", "default", "capture-pane", "-p", "-t", "=along:", "-S", "-60"], capture_output=True, text=True)
+        cx = rd(".along_codex.json")
+        log = open(f"{here}/.along_codex.log").readlines()[-80:] if os.path.exists(f"{here}/.along_codex.log") else []
         daemon = subprocess.run(["pgrep", "-f", "along.py run"], capture_output=True).returncode == 0
         arms = {}
         try:
@@ -148,7 +149,7 @@ def along_api(h, u):
             arms = {"error": str(e)}
         return send(json.dumps({"now": time.time(), "daemon": daemon, "seen": rd(".along_seen.json"),
                                 "idle": rd("along_idle.json", []), "events": ev, "arms": arms,
-                                "codex": pane.stdout if pane.returncode == 0 else None}).encode(), "application/json")
+                                "codex": cx, "codex_log": "".join(log)}).encode(), "application/json")
     if u.path == "/along/scene.jpg":
         import cv2
         try:

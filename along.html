@@ -55,7 +55,7 @@ label{font-size:12px;color:var(--dim)}
    <form id="yolo"><button type="button" id="wake">force wake</button><button type="button" id="idle" title="clear the table first">store idle baseline</button></form></section>
   <section><h3>Behind the scenes <span id="actstat"></span></h3>
    <div id="act"></div></section>
-  <section><h3>Codex session <span>along attach</span></h3><pre id="codex"></pre></section>
+  <section><h3>Codex turns <span>headless codex exec · along attach = open the thread</span></h3><pre id="codex"></pre></section>
  </div>
 </main>
 <script>
@@ -78,7 +78,7 @@ async function poll() {
       + (s ? chip(s.active ? 'ACTIVE' : 'idle', s.active ? 'on' : '') + chip(s.listening ? 'mic on' : 'mic off', s.listening ? 'on' : '')
            + chip(s.speaking ? 'Al talking (mic muted)' : 'silent', s.speaking ? 'warn' : '')
            + chip('new-object hits ' + (s.hits || []).filter(Boolean).length + '/4 (3 wakes)', '') : '')
-      + chip(d.codex === null ? 'no Codex session' : 'Codex up', d.codex === null ? '' : 'on');
+      + chip(d.codex?.pid ? 'Codex working' : d.codex?.thread ? 'Codex idle · thread ' + d.codex.thread.slice(0, 8) : 'Codex: no thread yet', d.codex?.pid ? 'warn' : '');
     const b = $('banner'), why = (s?.why || []).join(', ');
     let cls, big, small;
     if (!d.daemon || !s || age > 5) { cls = 'down'; big = 'NOT RUNNING'; small = d.daemon ? `daemon state ${age?.toFixed(0)} s old` : 'along run is not running: nothing is watched or heard'; }
@@ -109,7 +109,7 @@ async function poll() {
     $('actstat').innerHTML = s ? (s.busy ? '<span class="chip warn">Codex working</span> ' : '<span class="chip">Codex idle</span> ')
       + (s.state_t ? `arm snapshot ${(d.now - s.state_t).toFixed(0)} s old${s.state ? ': ' + esc(s.state) : ''}` : 'no arm snapshot (only while ON)') : '';
     const p = $('codex'), atEnd = p.scrollTop + p.clientHeight > p.scrollHeight - 30;
-    p.textContent = d.codex ?? '(no tmux session "along": it starts with `along run`)'; if (atEnd) p.scrollTop = 1e9;
+    p.textContent = d.codex_log || '(no Codex turn yet: it runs only when the router hands a task over)'; if (atEnd) p.scrollTop = 1e9;
   } catch (e) { $('chips').innerHTML = chip('stream server unreachable', 'bad'); }
   setTimeout(poll, 700);
 }
@@ -120,7 +120,7 @@ $('f').onsubmit = e => { e.preventDefault(); const t = $('txt').value.trim(), c 
 $('on').onclick = () => doit('on'); $('off').onclick = () => doit('off');
 $('open').onclick = () => doit('open');
 $('reset').onclick = () => confirm('Stop Al, open both grippers and move both arms to rest?') && doit('reset');
-$('fresh').onclick = () => confirm('Reset Al? Codex forgets everything since its brief (arms stay put).') && doit('fresh');
+$('fresh').onclick = () => confirm('Reset Al? Codex forgets this conversation; the next task starts from only its brief (arms stay put).') && doit('fresh');
 $('wake').onclick = () => doit('wake');
 $('idle').onclick = () => confirm('Store what the scene shows now as the idle baseline?') && doit('idle');
 </script></body></html>

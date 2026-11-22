@@ -2,9 +2,10 @@
 """along — voice helper around the arms. Idle: only a cheap detector watches the scene camera.
 Voice = GPT-Live (speech-to-speech; it hands robot/vision work to Codex) only while switched on (or, with --yolo, while an object of interest is there: a new object (not in
 the idle baseline, 3 of 4 frames to start, kept 8 s after it was last seen) or an arm holding/offering. What you say goes to
-one long-running Codex session (tmux "along", persona prompts/along.md) which acts with `robot`; its final message is spoken.
+a fast router (one gpt-6.1-sol call: runs a skill itself) or, for anything else, a headless Codex turn (codex_agent.py,
+brief prompts/along.md) which acts with `robot`; its final message is spoken.
 
-  along attach           open the Codex session (tmux "along" on the default server)
+  along attach           open Al's current Codex conversation in the Codex TUI (codex resume)
   along run              the daemon (mic + Codex bridge), switched by hand: along on / along off (or /along buttons)
   along run --yolo       instead wake on the scene camera (new thing in the centre of the table)
   along idle             store what the scene shows now as the idle baseline (empty table + fixtures)
@@ -29,15 +30,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SEEN, IDLE, MUTE = f"{HERE}/.along_seen.json", f"{HERE}/along_idle.json", f"{HERE}/.along_mute"
 HELD = f"{HERE}/.along_held.json"                        # {"left": "toothbrush"}: what each arm holds (set by the agent)
 EVENTS = f"{HERE}/.along_events.jsonl"                    # conversation + state history (debug page /along)
-TMUX, SPARE, W, H = "along", "along-spare", 800, 450    # Codex session + a warm one with only the brief (instant reset)
+W, H = 800, 450                                         # scene tile (px)
 ROI, CHANGE = (150, 60, 650, 430), 0.02                    # centre of the table (scene px) where new things wake Along
 BG = f"{HERE}/along_idle_bg.npy"
-CODEX = ["codex", "--dangerously-bypass-approvals-and-sandbox", "-C", HERE,
-         "-m", os.environ.get("ALONG_MODEL", "gpt-6.1-terra"), "-c", "model_reasoning_effort=low",
-         "-c", "model_auto_compact_token_limit=100000",
-         "-c", "project_doc_max_bytes=0", "-c", 'web_search="disabled"',   # no AGENTS.md (the brief has what it needs), no web
-         *[x for f in ("hooks", "plugins", "apps", "multi_agent", "image_generation", "browser_use", "computer_use", "goals",
-                       "skill_search", "in_app_browser", "tool_suggest") for x in ("--disable", f)]]
 
 
 def env(k, d=None):
@@ -238,86 +233,27 @@ class LiveVoice:
                 pass
             mic.kill(); spk.stdin.close(); spk.kill(); log("live session closed"); event("sys", "voice session closed")
 
-# ---------------------------------------------------------------- codex bridge
-def tmux(*a, **k):
-    """tmux on the default server. Session targets are exact ("=along"): plain "along" would also match "along-spare"."""
-    a = list(a)
-    if "-t" in a:
-        i = a.index("-t") + 1
-        a[i] = f"={a[i]}" + (":" if a[0] in ("send-keys", "capture-pane") else "")
-    return subprocess.run(["tmux", "-L", "default", *a], capture_output=True, text=True, **k)   # the default server, wherever along runs from
-
-
-TELL = threading.Lock()
-
-
-def codex_up(name=TMUX):
-    """Start a Codex session (once; it stays up across idle/active, auto-compacts) and wait until it has read the brief."""
-    if tmux("has-session", "-t", name).returncode == 0:
-        return
-    if name == TMUX and spare_ready():                    # the warm spare becomes the session: no wait
-        tmux("rename-session", "-t", SPARE, TMUX); event("sys", "Codex: warm spare session took over")
-        threading.Thread(target=spare_up, daemon=True).start(); return
-    log("starting Codex in tmux session", name); event("sys", f"starting Codex{' spare' if name == SPARE else ''} (reading its brief)")
-    tmux("new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", HERE,
-         *CODEX, open(f"{HERE}/prompts/along.md").read() + "\n\nReply \"ready\" now and end your turn; requests arrive as new turns.")
-    t0, last = time.time(), ""
-    while time.time() - t0 < 120:                          # idle = screen unchanged for 6 s after the first turn
-        time.sleep(3)
-        scr = tmux("capture-pane", "-p", "-t", name).stdout
-        if scr == last and "Worked for" in scr or time.time() - t0 > 90:
-            break
-        last = scr
-    log("Codex ready", name); event("sys", f"Codex{' spare' if name == SPARE else ''} ready ({time.time() - t0:.0f} s)")
-
-
-SPARE_LOCK = threading.Lock()
-
-
-def spare_ready():
-    return tmux("has-session", "-t", SPARE).returncode == 0 and "Worked for" in tmux("capture-pane", "-p", "-t", SPARE).stdout
-
-
-def spare_up():
-    if SPARE_LOCK.acquire(blocking=False):
-        try:
-            codex_up(SPARE)
-        finally:
-            SPARE_LOCK.release()
-
-
-def codex_fresh():
-    """Codex back to only its brief: the warm spare takes over at once (a new spare warms up behind it)."""
-    interrupt_codex(); tmux("kill-session", "-t", TMUX); time.sleep(0.2)
-    with TELL:
-        codex_up()
+# ---------------------------------------------------------------- codex (slow path; see codex_agent.py)
+import codex_agent
 
 
 def interrupt_codex():
-    """Stop the running turn, its background shells and any skill in flight (an open-jawed hold stays where it is)."""
-    tmux("send-keys", "-t", TMUX, "Escape"); time.sleep(0.3)
-    tmux("send-keys", "-t", TMUX, "-l", "/stop"); time.sleep(0.2); tmux("send-keys", "-t", TMUX, "Enter")
+    """Stop the running Codex turn and any skill in flight (an open-jawed hold stays where it is)."""
+    codex_agent.interrupt()
     subprocess.run(["pkill", "-f", r"^\S*python\S* \S*(along\.py (hold|release|turn|tilt|press|look)|robot\.py (offer|step))"], capture_output=True)
     BUSY.clear(); event("sys", "Codex interrupted (running turn and skills stopped)")
 
 
-def tell_lock_up():
-    if TELL.acquire(blocking=False):
-        try:
-            codex_up()
-        finally:
-            TELL.release()
+def codex_fresh():
+    codex_agent.fresh(); event("sys", "Codex context cleared: the next task starts from only the brief")
 
 
-def tell(text):
+def tell(text, fresh=False, wait=False):
+    """Hand a task to Codex (headless turn; a running one is replaced). Its final message is spoken."""
     if env("ALONG_DRY"):                                   # test the daemon without Codex
         return log("(dry) ->", text)
-    with TELL:
-        codex_up()
-        tmux("send-keys", "-t", TMUX, "-l", text.replace("\n", " "))
-        time.sleep(0.3)
-        tmux("send-keys", "-t", TMUX, "Enter")
-    log("->", text); event("tell", text)
+    log("->", text); event("tell", ("[fresh] " if fresh else "") + text)
+    return codex_agent.run(text, fresh, on_event=event, on_reply=lambda m: say(m[:400]), wait=wait)
 
 
 # ---------------------------------------------------------------- vision
@@ -424,7 +360,7 @@ def engaged(bot):
 ON = f"{HERE}/.along_on"                                    # manual switch: exists = Along is on (mic open)
 
 
-BUSY = threading.Event()                                  # a Codex turn is running
+BUSY = threading.Event()                                  # a skill the router started is running
 STATE = {"text": "", "t": 0.0}                            # latest look-only robot step while switched on
 
 
@@ -442,59 +378,11 @@ def brief_state(txt):
 def watch(mic):
     """While switched on and Codex is idle: refresh snap_all.jpg + arm state every 2 s, so a request starts with a fresh view."""
     while True:
-        if mic.on.is_set() and not BUSY.is_set():
+        if mic.on.is_set() and not BUSY.is_set() and not codex_agent.busy():
             txt = rstep()
             if txt:
                 STATE.update(text=brief_state(txt), t=time.time())
         time.sleep(2.0)
-
-
-def relay_replies():
-    """Codex's final message of each turn is what Al says (GPT-Live voices it): no `along say` tool call needed."""
-    import glob
-    done, first, mt = set(), True, {}
-    while True:
-        fs = sorted(glob.glob(os.path.expanduser("~/.codex/sessions/*/*/*/rollout-*.jsonl")), key=os.path.getmtime)[-6:]
-        for f in fs:
-            if mt.get(f) == os.path.getmtime(f):
-                continue
-            mt[f] = os.path.getmtime(f)
-            with open(f) as fh:
-                if f'"cwd":"{HERE}"' not in fh.readline():
-                    continue
-                for ln in fh:
-                    if '"custom_tool_call' in ln or '"function_call' in ln or '"turn_aborted"' in ln:
-                        p = json.loads(ln).get("payload", {}); cid = p.get("call_id") or p.get("turn_id")
-                        key = (p.get("type"), cid)
-                        if key in done:
-                            continue
-                        done.add(key)
-                        if first:
-                            continue
-                        if p.get("type") in ("custom_tool_call", "function_call"):
-                            src = p.get("input") or p.get("arguments") or ""
-                            cmds = [json.loads('"' + c + '"') for c in re.findall(r'\bcmd"?\s*:\s*"((?:[^"\\]|\\.)*)"', src)]
-                            event("codex", "$ " + " ; ".join(cmds) if cmds else f"{p.get('name')}: {src[:200]}")
-                        elif p.get("type") == "turn_aborted":
-                            event("codex", "turn stopped")
-                        else:
-                            out = p.get("output")
-                            if isinstance(out, list):
-                                out = " ".join(o.get("text", "") for o in out if isinstance(o, dict))
-                            out = re.sub(r"Script completed\s*Wall time ([\d.]+) seconds\s*Output:", r"(\1 s)", str(out or ""))
-                            event("codex", "→ " + " ".join(out.split())[:300])
-                        continue
-                    if '"task_complete"' not in ln:
-                        continue
-                    p = json.loads(ln).get("payload", {}); tid = p.get("turn_id")
-                    if tid in done:
-                        continue
-                    done.add(tid); msg = (p.get("last_agent_message") or "").strip(); BUSY.clear()
-                    if not first:
-                        event("codex", f"turn done in {(p.get('duration_ms') or 0) / 1000:.1f} s (first token {(p.get('time_to_first_token_ms') or 0) / 1000:.1f} s)")
-                    if not first and msg and msg.lower().strip(".") != "ready":
-                        say(msg[:400])
-        first = False; time.sleep(0.3)
 
 
 # ---------------------------------------------------------------- router: one fast vision+decision call per request
@@ -581,9 +469,10 @@ def route(text):
     import requests
     t0 = time.time()
     run = f"running now: {RUN['what']}" if RUN["p"] and RUN["p"].poll() is None else "nothing running"
-    conv, acts = recent()
+    conv, acts = recent(); cx = codex_agent.state()
     ctx = (f"Request (last thing heard): {text}\n\nArm state: {STATE['text'] or 'unknown'} ({time.time() - STATE['t']:.0f} s old); "
-           f"held: {json.dumps(rd_held())}; {run}; Codex {'is busy with a task' if BUSY.is_set() else 'idle'}."
+           f"held: {json.dumps(rd_held())}; {run}; Codex {'is busy with: ' + cx['task'][:200] if cx['pid'] else 'idle'}"
+           f"{'; its last task: ' + cx['last']['task'][:200] + ' -> ' + repr(cx['last']['reply'][:120]) if cx['last'] else ''}."
            f"\n\nRecent conversation:\n{conv}\n\nRecent activity (router = you, tell = task sent to Codex, codex = its "
            f"commands and turns):\n{acts}")
     imgs = frames()
@@ -611,11 +500,10 @@ def act(r, text):
     if a == "stop":
         interrupt_codex(); return say(say_done or "Stopped.")
     if a == "codex":
-        if r.get("codex_fresh"):
-            event("sys", "router: fresh Codex context for this task"); codex_fresh()
         age = time.time() - STATE["t"]
         now = f"now: {STATE['text']}; snap_all.jpg {age:.0f} s old" if age < 30 else "arm state: run robot step"
-        BUSY.set(); return tell(f"[task] {r.get('codex_prompt') or text}   || heard: {text}; {now}; held {json.dumps(rd_held())}")
+        return tell(f"[task] {r.get('codex_prompt') or text}   || heard: {text}; {now}; held {json.dumps(rd_held())}",
+                    fresh=bool(r.get("codex_fresh")))
     if RUN["p"] and RUN["p"].poll() is None:               # a new action replaces the running one
         interrupt_codex()
     o = r.get("object")
@@ -672,7 +560,7 @@ def act(r, text):
 
 def run_manual():
     """Manual on/off (`along on` / `along off`, or the page buttons) instead of the scene detector."""
-    on, last_voice, last_check = False, 0.0, time.time()
+    on, last_voice = False, 0.0
 
     def heard(text):
         nonlocal last_voice
@@ -684,14 +572,11 @@ def run_manual():
                 return act(route(text), text)
             except Exception as e:
                 log("router failed", e); event("error", f"router: {e}; Codex takes it")
-        BUSY.set(); tell(f"[voice] {text}{ctx}")
+        tell(f"[voice] {text}{ctx}")
     if not env("OPENAI_API_KEY"):
         sys.exit("OPENAI_API_KEY missing (.env): GPT-Live is the voice")
     mic = LiveVoice(heard)
-    threading.Thread(target=relay_replies, daemon=True).start()
     threading.Thread(target=watch, args=(mic,), daemon=True).start()
-    if not env("ALONG_DRY"):
-        codex_up()
     log("off (GPT-Live voice); waiting for `along on`")
     while True:
         t, want = time.time(), os.path.exists(ON)
@@ -701,16 +586,10 @@ def run_manual():
         elif on and not want:
             on = False; mic.on.clear(); log("OFF"); event("idle", "switched off")
             interrupt_codex()                                         # off = interrupt Codex + no voice; arms stay put
-        if t - last_check > 10:                                       # the one Codex session: bring it back if it died
-            last_check = t
-            if not env("ALONG_DRY") and tmux("has-session", "-t", TMUX).returncode != 0:
-                threading.Thread(target=tell_lock_up, daemon=True).start()
-            elif not env("ALONG_DRY") and tmux("has-session", "-t", SPARE).returncode != 0:
-                threading.Thread(target=spare_up, daemon=True).start()
         json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
                    "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
                    "voice": "GPT-Live", "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice,
-                   "busy": BUSY.is_set(), "state_t": STATE["t"], "state": STATE["text"]}, open(SEEN, "w"))
+                   "busy": BUSY.is_set() or codex_agent.busy(), "state_t": STATE["t"], "state": STATE["text"]}, open(SEEN, "w"))
         time.sleep(0.2)
 
 
@@ -725,8 +604,6 @@ def run():
         nonlocal last_voice
         last_voice = time.time(); tell(f"[voice] {text}")
     mic = LiveVoice(heard)
-    if not env("ALONG_DRY"):
-        codex_up()                                         # warm, so waking up is instant
     log("idle; watching the scene")
     while True:
         t = time.time()
@@ -955,9 +832,7 @@ def skill(a):
         print(rstep("set left_gripper 45; set right_gripper 45")); json.dump({}, open(HELD, "w")); event("held", "{}")
         print(rstep("recall ready left; recall ready right")); print(rstep("recall rest left; recall rest right"))
     elif cmd == "fresh":                            # along fresh: Codex back to just its brief (dashboard "Reset Al")
-        event("sys", "resetting Codex: new session with only the brief")
-        codex_fresh(); spare_up()
-        print("Codex reset: fresh session, brief only")
+        codex_fresh(); print("Codex reset: the next task starts from only the brief")
     elif cmd == "park":                             # along park: arms that hold nothing go to rest
         h = rd_held()
         print(rstep("; ".join(f"recall rest {sd}" for sd in ("left", "right") if sd not in h) or ""))
@@ -968,7 +843,10 @@ def main():
     if a[0] == "run":
         run() if "--yolo" in a else run_manual()
     elif a[0] == "attach":                                # watch / type into the Codex session
-        os.environ.pop("TMUX", None); os.execvp("tmux", ["tmux", "-L", "default", "attach", "-t", f"={TMUX}"])
+        th = codex_agent.state()["thread"]
+        if not th:
+            sys.exit("no Codex conversation yet (or it was reset)")
+        os.chdir(HERE); os.execvp("codex", ["codex", "resume", th])
     elif a[0] == "on":
         open(ON, "w").write("on")
     elif a[0] == "off":
@@ -1003,7 +881,7 @@ def main():
                     return
                 except Exception as e:
                     event("error", f"router: {e}; Codex takes it")
-        tell(t)
+        tell(t, wait=True)
     elif a[0] == "idle":
         e = Eyes(conf=0.1); d = [x for _ in range(6) for x in e.detect()]   # union of a few frames: flicker-proof
         import numpy as np; np.save(BG, e.bg)
