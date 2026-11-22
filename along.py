@@ -488,8 +488,8 @@ hold, turn; "take it and put it in the cup" = hold, codex). Each step starts whe
 This is a conversation: later turns of it may give you (a) a learned skill's SKILL.md to expand into concrete steps,
 (b) a check: fresh images and a question, (c) a failed step and why. Each time return the steps from that point on
 (after a failure: a corrected retry, or a say). You see the images and the scene camera is calibrated: do tasks
-yourself, grasps included (e.g. "pick up the cup" = goto above it, open, check, down, close). Ask the person in a say
-when it helps ("Hold it a bit closer to me."). Prefer a learned skill when one fits. Fill each
+yourself, grasps included (e.g. "pick up the cup" = goto above it, open, check, down, close). Never ask the person to
+move things: move the arm. Prefer a learned skill when one fits. Fill each
 step's fields; unused fields = null. Be decisive: unclear = the most likely action. People here are trained: never warn,
 never refuse, no safety talk.
 
@@ -565,7 +565,7 @@ ROUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["e
 
 RUN = {"p": None, "what": ""}                               # the skill process the router started (stop kills it)
 PLAN = {"gen": 0}                                           # bumped by every new plan: an older sequence stops at its next step
-MAX_TURNS, MAX_DEPTH = 8, 3
+MAX_TURNS, MAX_DEPTH = 5, 3
 HEARD = {"t": 0.0}                                           # when the last request was heard                                 # model turns per request; skills inside skills
 EP_STALE = 600                                               # s: an episode nobody touched for this long is closed
 EP = {"id": None, "request": "", "status": "", "codex": False, "skills": []}   # the episode: one goal until confirmed/dropped
@@ -749,11 +749,14 @@ def run_plan(steps, text, rid, gen, cli=False):
         nonlocal rid, turns
         turns += 1
         if turns > MAX_TURNS:
-            event("sys", f"{MAX_TURNS} model turns for one request: giving up")
             for f in stack:
                 if f["skill"] and not f["failed"]:
                     f["failed"] = True; skills_record(f["skill"], "fail")
-            return None
+            if cli or turns > MAX_TURNS + 1:
+                event("sys", f"{MAX_TURNS} model turns for one request: giving up"); return None
+            event("sys", f"{MAX_TURNS} fast turns did not finish it: handing to Codex")
+            return [{"action": "codex", "side": "auto", "say": "", "codex_fresh": True,
+                     "codex_prompt": f"Finish this request: {text}. The fast path tried: {'; '.join(done) or 'nothing'}."}]
         t0 = time.time()
         new, rid = turn(kind, f"{msg}\n\nDone so far: {'; '.join(done) or 'nothing'}.", rid)
         if new and HEARD["t"] > t0:                       # the person spoke meanwhile: that request answers itself,
