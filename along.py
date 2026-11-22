@@ -124,6 +124,7 @@ class LiveVoice:
         self.on, self.on_text, self.phase, self.prob, self.stt_busy = threading.Event(), on_text, "off", 0.0, False
         self.ws, self.deleg, self.heard, self.speak_until = None, None, "", 0.0
         self.utt, self.utt_t, self.pend = "", 0.0, 0.0     # current utterance (page log); pending hand-off time
+        self.orphan, self.said_t, self.routed_t = 0.0, 0.0, 0.0                 # addressed utterance GPT-Live did not hand off; Al last spoke
         threading.Thread(target=self.loop, daemon=True).start()
 
     def loop(self):
@@ -200,11 +201,11 @@ class LiveVoice:
                     if len(b) >= 2 and float(np.sqrt(np.mean(np.frombuffer(b, np.int16).astype(np.float32) ** 2))) > 300:
                         self.speak_until = max(self.speak_until, time.time() + 0.6); self.phase = "muted"
                 elif k == "session.output_transcript.delta":
-                    said += e["delta"]
+                    said += e["delta"]; self.said_t = time.time()
                 elif k == "session.input_transcript.delta":
                     self.heard += e["delta"]; self.utt += e["delta"]; self.utt_t = time.time(); self.phase = "speech"
                 elif k == "session.delegation.created":         # carries no text: hand over what was heard, once it settles
-                    self.deleg, self.pend, self.phase = e["delegation"]["id"], time.time(), "listening"
+                    self.deleg, self.pend, self.phase, self.orphan = e["delegation"]["id"], time.time(), "listening", 0.0
                     event("sys", "GPT-Live handed off a request")
                 elif k == "error":
                     log("live:", e); event("error", f"live: {e.get('error', e)}")
@@ -212,9 +213,18 @@ class LiveVoice:
                     if self.utt.strip():
                         event("heard", self.utt.strip()); self.utt = ""
                     req, self.heard, self.pend = " ".join(self.heard.split())[-400:], "", 0.0
-                    threading.Thread(target=self.on_text, args=(req or "(inaudible)",), daemon=True).start()
+                    if req or time.time() - self.routed_t > 60:   # a late hand-off of something we already routed: drop
+                        threading.Thread(target=self.on_text, args=(req or "(inaudible)",), daemon=True).start()
                 if self.utt.strip() and time.time() - self.utt_t > 1.0:     # utterance over: log it once
-                    event("heard", self.utt.strip()); self.utt = ""
+                    u = self.utt.strip(); event("heard", u); self.utt = ""
+                    if re.search(r"\b(al|all|hal|al's)\b", u, re.I) or time.time() - self.said_t < 20:
+                        self.orphan = time.time()             # meant for Al: if GPT-Live does not hand it off, we do
+                if self.orphan and time.time() - self.orphan > 2.5:     # GPT-Live normally hands off within ~2 s
+                    self.orphan = 0.0
+                    if not self.pend and self.heard.strip():  # GPT-Live answered ("Sure.") but never delegated
+                        event("sys", "GPT-Live did not hand this off: routing it ourselves")
+                        req, self.heard, self.routed_t = " ".join(self.heard.split())[-400:], "", time.time()
+                        threading.Thread(target=self.on_text, args=(req,), daemon=True).start()
                 if time.time() > self.speak_until + 0.3:
                     if self.phase == "muted":
                         self.phase = "listening"
