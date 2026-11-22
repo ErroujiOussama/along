@@ -234,6 +234,8 @@ class LiveVoice:
 # ---------------------------------------------------------------- codex (slow path; see codex_agent.py)
 import codex_agent
 codex_agent.API_KEY = env("OPENAI_API_KEY")              # Codex on the API key: gpt-6.1-sol, fast tier
+import llm
+llm.API_KEY = env("OPENAI_API_KEY")                       # every Responses call (router, skills, checks, looks)
 
 
 def interrupt_codex():
@@ -389,13 +391,16 @@ ROUTE_PROMPT = """You are the fast router of Al, two SO-101 robot arms (left = w
 voice. A voice model talks to people and hands you each request (speech-to-text: may be garbled or carry room chatter
 before it; act on the last thing said to Al). You get the camera images, the arm state and the recent conversation.
 Return actions = the steps in order: usually one; a sequence when the request needs several ("hold this and turn it" =
-hold, turn; "take it and put it in the cup" = hold, codex). Each step starts when the previous one succeeded; a failed
-step ends the sequence. codex, if needed, is the last step (it is told what the steps before did and what Al said).
+hold, turn; "take it and put it in the cup" = hold, codex). Each step starts when the previous one succeeded.
+This is a conversation: later turns of it may give you (a) a learned skill's SKILL.md to expand into concrete steps,
+(b) a check: fresh images and a question, (c) a failed step and why. Each time return the steps from that point on
+(after a failure: a corrected retry, a say, or codex). codex, if used, ends the sequence (it is told what the steps
+before did and what Al said).
 Hard tasks: start right away with what you can do fast and hand the rest to codex, e.g. "pick up the cup" = step (coarse
 goto ~8 cm above/in front of it, gripper open; say e.g. "Let me get that cup.") then codex (the precise grasp); ask the
-person for help in a say when it helps ("Hold it a bit closer to me."). Fill each step's
-fields; unused fields = null. Be decisive: unclear = the most likely action. People here are
-trained: never warn, never refuse, no safety talk.
+person for help in a say when it helps ("Hold it a bit closer to me."). Prefer a learned skill when one fits. Fill each
+step's fields; unused fields = null. Be decisive: unclear = the most likely action. People here are trained: never warn,
+never refuse, no safety talk.
 
 Actions:
 - hold: an arm reaches out to what a person holds out (or will), jaws open, closes once it is put in. side = the arm the
@@ -408,14 +413,25 @@ Actions:
 - stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").
 - step: a short direct move sequence for robot step, ';'-chained: goto <side> x y z (m, that arm's base frame: x forward,
   y to the arm's left, z up, table z -0.02; >= 2 cm), move <side>_<joint> <deg> (relative, >= 5), set <side>_gripper
-  <0-100> (0 closed), recall ready|rest <side>. Joints: shoulder_pan (+ toward the arm's own right), shoulder_lift,
+  <0-100> (0 closed), recall ready|rest <side>, goto <side> px u v z (scene pixel u v at height z m: located for you,
+  use it for anything you see). Joints: shoulder_pan (+ toward the arm's own right), shoulder_lift,
   elbow_flex, wrist_flex (+ tips down), wrist_roll, gripper. E.g. "open the left gripper" = set left_gripper 100.
+  Targets past the arm's reach go to the nearest point it reaches.
+- check: question = what to verify in fresh images (e.g. "is the orange tip right above the pump head?"); you then get
+  a turn with new images and return the corrected / remaining steps. Use it where precision matters, before the risky step.
+- skill: a learned skill (list below): skill = its name, args = the values its args line asks for (free text). You
+  then get a turn with its SKILL.md and return its concrete steps.
 - answer: only talk: questions about the scene, the arms, greetings. say = the answer.
 - codex: anything multi-step, a grasp of something on the table, or a task none of the above covers: codex_prompt = a
   self-contained instruction for the slower agent with all you know (object, where it is in px, which arm).
   codex_fresh = true when the task has nothing to do with what Codex did recently (it then starts from a clean session,
   faster and not confused by old context); false to continue its context ("now do the same with the other arm").
 - none: not addressed to Al (chatter, other conversations, other languages not meant for Al): actions = [none], say = "".
+
+episode = how the request relates to the open episode (the goal being worked on, given in the context): "new" (a new
+goal, or none is open), "continue" (same goal: retry, a correction, "now the other arm"), "confirm" (the person says it
+worked: "yes", "perfect", "thanks, that worked"; answer e.g. "Great!"), "deny" (it didn't: "no", "you missed"; then
+fix it, usually codex continuing), "none" (chatter, questions, small talk). In later turns of the conversation: "continue".
 
 say = what Al says when that step is done: ONE short sentence ("Done.", "Here you go.", an answer of at most ~12 words), or
 "" for nothing (in a sequence usually only the last step speaks; a last step with "" says "Done."). For hold leave it ""
@@ -426,10 +442,11 @@ the table, pose = "upright" or "flat" (held horizontally), axis_deg = its long a
 scene camera faces the arms: the orange/right arm is on image-left. Wrist images look out between each arm's jaws."""
 
 STEP_SCHEMA = {"type": "object", "additionalProperties": False,
-    "required": ["action", "side", "what", "deg", "depth_cm", "step", "object", "say", "codex_prompt", "codex_fresh"],
+    "required": ["action", "side", "what", "deg", "depth_cm", "step", "object", "skill", "args", "question", "say",
+                 "codex_prompt", "codex_fresh"],
     "properties": {
         "action": {"type": "string", "enum": ["hold", "release", "turn", "tilt", "press", "open", "park", "reset", "stop",
-                                              "step", "answer", "codex", "none"]},
+                                              "step", "check", "skill", "answer", "codex", "none"]},
         "side": {"type": ["string", "null"], "enum": ["left", "right", "auto", None]},
         "what": {"type": ["string", "null"]}, "deg": {"type": ["number", "null"]}, "depth_cm": {"type": ["number", "null"]},
         "step": {"type": ["string", "null"]},
@@ -438,24 +455,36 @@ STEP_SCHEMA = {"type": "object", "additionalProperties": False,
             "properties": {"u": {"type": "number"}, "v": {"type": "number"}, "dist_cm": {"type": ["number", "null"]},
                            "height_cm": {"type": ["number", "null"]}, "pose": {"type": "string", "enum": ["upright", "flat"]},
                            "axis_deg": {"type": ["number", "null"]}}}]},
+        "skill": {"type": ["string", "null"]}, "args": {"type": ["string", "null"]}, "question": {"type": ["string", "null"]},
         "say": {"type": "string"}, "codex_prompt": {"type": ["string", "null"]}, "codex_fresh": {"type": ["boolean", "null"]}}}
 
-ROUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["actions"],
-                "properties": {"actions": {"type": "array", "items": STEP_SCHEMA}}}
+ROUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["episode", "actions"],
+                "properties": {"episode": {"type": "string", "enum": ["new", "continue", "confirm", "deny", "none"]},
+                               "actions": {"type": "array", "items": STEP_SCHEMA}}}
 
 RUN = {"p": None, "what": ""}                               # the skill process the router started (stop kills it)
 PLAN = {"gen": 0}                                           # bumped by every new plan: an older sequence stops at its next step
+MAX_TURNS, MAX_DEPTH = 8, 3                                 # model turns per request; skills inside skills
+EP = {"id": None, "request": "", "status": "", "codex": False, "skills": []}   # the episode: one goal until confirmed/dropped
+
+
+def route_prompt():
+    """ROUTE_PROMPT + the one-line index of the learned skills (their SKILL.md only comes in a skill turn)."""
+    try:
+        import skills
+        idx = skills.index_text()
+    except Exception as e:
+        idx = f"(skills unavailable: {e})"
+    return ROUTE_PROMPT + "\n\nLearned skills (action skill; skill = the name, args = what its args line asks for):\n" + idx
 
 
 def frames(cams=("scene", "left", "right")):
-    """Live camera thumbs as data URLs (scene = the 800x450 tile, so pixels go straight into locate)."""
-    import base64, cv2
+    """Live camera thumbs as (label, data URL) (scene = the 800x450 tile, so pixels go straight into locate)."""
     from so101 import Robot
     bot, out = Robot(), []
     for c in cams:
         try:
-            img = bot.thumb(c, *((W, H) if c == "scene" else (640, 360)))
-            out.append((c, "data:image/jpeg;base64," + base64.b64encode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1]).decode()))
+            out.append((f"{c} camera", llm.image_url(bot.thumb(c, *((W, H) if c == "scene" else (640, 360))))))
         except Exception as e:
             log("frames: no", c, e)
     return out
@@ -470,34 +499,54 @@ def recent():
     lab = {"heard": "person", "say": "Al", "live": "Al"}
     conv = "\n".join(f"{lab[e['kind']]}: {e['text'][:160]}" for e in ev if e["kind"] in lab)[-900:]
     acts = [f"{time.time() - e['t']:.0f} s ago {e['kind']}: {e['text'][:200]}" for e in ev
-            if e["kind"] in ("route", "tell", "skill") or e["kind"] == "codex" and not e["text"].startswith("→")]
+            if e["kind"] in ("route", "turn", "tell", "skill") or e["kind"] == "codex" and not e["text"].startswith("→")]
     return conv, "\n".join(acts[-10:])
 
 
+def summary(steps):
+    return " → ".join(f"skill:{s.get('skill')}" if s["action"] == "skill" else s["action"] for s in steps) or "[]"
+
+
+def episode(status, **k):
+    EP.update(status=status, **k)
+    event("episode", json.dumps({"id": EP["id"], "status": status, "request": EP["request"][:200], "codex": EP["codex"],
+                                 "skills": EP["skills"]}))
+
+
+def episode_ctx():
+    if not EP["id"] or EP["status"] in ("confirmed", "dropped"):
+        return "Open episode: none."
+    return (f"Open episode: \"{EP['request'][:200]}\" ({EP['status']}{', Al asked whether it worked' if EP['status'] == 'asked' else ''}"
+            f"; Codex needed: {'yes' if EP['codex'] else 'no'}; skills used: {', '.join(EP['skills']) or 'none'}).")
+
+
 def route(text):
-    """One gpt-6.1-sol ultrafast call: transcript + state + 3 images -> {actions: [{action, params, object, say, codex_prompt}]}."""
-    import requests
+    """Turn 1 of a request's conversation: transcript + state + 3 images -> {episode, actions: [...]} (+ "_rid")."""
     t0 = time.time()
     run = f"running now: {RUN['what']}" if RUN["p"] and RUN["p"].poll() is None else "nothing running"
     conv, acts = recent(); cx = codex_agent.state()
-    ctx = (f"Request (last thing heard): {text}\n\nArm state: {STATE['text'] or 'unknown'} ({time.time() - STATE['t']:.0f} s old); "
-           f"held: {json.dumps(rd_held())}; {run}; Codex {'is busy with: ' + cx['task'][:200] if cx['pid'] else 'idle'}"
+    ctx = (f"Request (last thing heard): {text}\n\n{episode_ctx()}\n\nArm state: {STATE['text'] or 'unknown'} "
+           f"({time.time() - STATE['t']:.0f} s old); held: {json.dumps(rd_held())}; {run}; Codex "
+           f"{'is busy with: ' + cx['task'][:200] if cx['pid'] else 'idle'}"
            f"{'; its last task: ' + cx['last']['task'][:200] + ' -> ' + repr(cx['last']['reply'][:120]) if cx['last'] else ''}."
-           f"\n\nRecent conversation:\n{conv}\n\nRecent activity (router = you, tell = task sent to Codex, codex = its "
+           f"\n\nRecent conversation:\n{conv}\n\nRecent activity (router/turn = you, tell = task sent to Codex, codex = its "
            f"commands and turns):\n{acts}")
-    imgs = frames()
-    content = [{"type": "input_text", "text": ctx}] + sum(([{"type": "input_text", "text": f"{c} camera:"},
-                                                            {"type": "input_image", "image_url": u}] for c, u in imgs), [])
-    r = requests.post("https://api.openai.com/v1/responses", headers={"Authorization": f"Bearer {env('OPENAI_API_KEY')}"},
-                      json={"model": env("ALONG_ROUTE_MODEL", "gpt-6.1-sol"), "service_tier": env("ALONG_LOOK_TIER", "ultrafast"),
-                            "reasoning": {"effort": "low"}, "instructions": ROUTE_PROMPT,
-                            "text": {"format": {"type": "json_schema", "name": "route", "strict": True, "schema": ROUTE_SCHEMA}},
-                            "input": [{"role": "user", "content": content}]}, timeout=30)
-    r.raise_for_status()
-    out = json.loads("".join(c.get("text", "") for o in r.json().get("output", []) if o.get("type") == "message"
-                             for c in o.get("content", [])))
-    event("route", f"({time.time() - t0:.1f} s) " + json.dumps({k: v for k, v in out.items() if v not in (None, "")}))
-    return out
+    out, rid = llm.call("route", [ctx] + frames(), instructions=route_prompt(), schema=ROUTE_SCHEMA, timeout=30)
+    event("route", f"({time.time() - t0:.1f} s) {out['episode']}: {summary(out['actions'])} "
+          + json.dumps([{k: v for k, v in s.items() if v not in (None, "")} for s in out["actions"]]))
+    return {**out, "_rid": rid}
+
+
+def turn(kind, msg, rid):
+    """A later turn of the same conversation (skill expansion, check, failure): fresh state + images -> steps."""
+    t0 = time.time()
+    STATE.update(text=brief_state(rstep()), t=time.time())
+    out, rid = llm.call(kind, [f"{msg}\n\nArm state now: {STATE['text']}; held {json.dumps(rd_held())}."] + frames(),
+                        instructions=route_prompt(), schema=ROUTE_SCHEMA, prev=rid, episode=EP["id"], timeout=30)
+    steps = [s for s in out["actions"] if s["action"] != "none"]
+    event("turn", f"{kind} ({time.time() - t0:.1f} s): {summary(steps)} "
+          + json.dumps([{k: v for k, v in s.items() if v not in (None, "")} for s in steps]))
+    return steps, rid
 
 
 def robot_errs(out):
@@ -506,11 +555,22 @@ def robot_errs(out):
 
 
 def act(plan, text, answered=False):
-    """Run the router's plan: its steps in order, each after the previous one succeeded (latest request wins: a newer plan
-    interrupts this one). answered = GPT-Live already replied itself (it never handed off): no extra talk."""
+    """Run the router's plan in its own thread (latest request wins: a newer plan interrupts this one); keeps the episode.
+    answered = GPT-Live already replied itself (it never handed off): no extra talk."""
     steps = [st for st in plan["actions"] if st["action"] != "none" and not (answered and st["action"] == "answer")]
     if answered and any(st["action"] == "answer" for st in plan["actions"]):
         event("sys", "GPT-Live already answered this itself: not saying it twice")
+    ep, real = plan.get("episode", "new"), any(st["action"] != "answer" for st in steps)
+    if ep == "confirm" and EP["id"] and EP["status"] not in ("confirmed", "dropped"):
+        confirm_episode()
+    elif ep == "deny" and EP["id"]:
+        episode("open")
+    elif real and (ep == "new" or not EP["id"] or EP["status"] in ("confirmed", "dropped")):
+        if EP["id"] and EP["status"] not in ("confirmed", "dropped", "done"):
+            episode("dropped")
+        EP.update(id=f"e{time.time():.0f}", request=text, codex=False, skills=[]); episode("open")
+    if plan.get("_rid") and ep != "none" and EP["id"]:
+        llm.tag(plan["_rid"], EP["id"])
     if not steps:
         return
     if all(st["action"] == "answer" for st in steps):     # only talk: never interrupts what runs
@@ -520,30 +580,137 @@ def act(plan, text, answered=False):
         interrupt_codex()                                   # a new request replaces whatever runs
 
     def go():
-        BUSY.set(); done = []
+        BUSY.set()
         try:
-            for i, st in enumerate(steps):
-                if PLAN["gen"] != gen:
-                    return event("sys", f"plan replaced by a newer request after {len(done)} of {len(steps)} steps")
-                if not do_step(st, text, done, steps[i + 1:], i == len(steps) - 1):
-                    return
+            run_plan(steps, text, plan.get("_rid"), gen)
+        except Exception as e:
+            event("error", f"plan: {type(e).__name__}: {e}"); say("Something went wrong.")
         finally:
             if PLAN["gen"] == gen:
                 BUSY.clear()
     threading.Thread(target=go, daemon=True).start()
 
 
-def do_step(r, text, done, rest, last):
-    """One plan step, blocking. True = go on with the next step. done: what earlier steps did (for Codex)."""
+def run_plan(steps, text, rid, gen, cli=False):
+    """Execute steps as a stack of frames (the request, then one per expanded skill). skill / check / a failed step =
+    a new model turn in the same conversation. cli = `along skill` (run by Codex): a codex step ends it with exit 1.
+    Returns True when everything ran."""
+    stack, done, turns, codex_ran = [{"skill": None, "steps": list(steps), "failed": False}], [], 0, False
+
+    def replan(kind, msg):
+        nonlocal rid, turns
+        turns += 1
+        if turns > MAX_TURNS:
+            event("sys", f"{MAX_TURNS} model turns for one request: giving up"); return None
+        new, rid = turn(kind, f"{msg}\n\nDone so far: {'; '.join(done) or 'nothing'}.", rid)
+        return new
+
+    while stack:
+        if PLAN["gen"] != gen:
+            return event("sys", "plan replaced by a newer request")
+        fr = stack[-1]
+        if not fr["steps"]:
+            stack.pop()
+            if fr["skill"] and not fr["failed"]:
+                skills_record(fr["skill"], "win")
+            continue
+        st = fr["steps"].pop(0)
+        a, where = st["action"], " › ".join(f["skill"] for f in stack if f["skill"])
+        last = all(not f["steps"] for f in stack)
+        if a == "skill":
+            name, chain = (st.get("skill") or "").strip().removeprefix("skill:"), [f["skill"] for f in stack if f["skill"]]
+            import skills
+            sk = skills.load(name)
+            why = ("no such skill" if not sk else "it is already running (a cycle)" if name in chain
+                   else f"skills nest at most {MAX_DEPTH} deep" if len(chain) >= MAX_DEPTH else "")
+            if why:
+                new = replan("fail", f"skill:{name} can't run: {why}. Return what to do instead.")
+                if new is None:
+                    return say("Hm, I'm stuck on this one.")
+                fr["steps"] = new; continue
+            skills_record(name, "use"); EP["skills"].append(name)
+            event("skill", f"skill:{name} ({st.get('args') or 'no args'}){' inside ' + where if where else ''}")
+            new = replan("skill", f"Expand skill:{name} (args: {st.get('args') or 'none'}; chain: "
+                         f"{' › '.join(chain + [name])}) into concrete steps for the current scene (fresh images below), "
+                         f"following its steps, checks and pitfalls. Your say lines are spoken.\n\nSKILL.md:\n{sk['body']}")
+            if new is None:
+                return say("Hm, I'm stuck on this one.")
+            stack.append({"skill": name, "steps": new, "failed": False}); continue
+        if a == "check":
+            event("check", st.get("question") or "")
+            new = replan("check", f"Check{' in skill:' + where if where else ''}: {st.get('question')}\nFresh images below. "
+                         f"Still planned after this check: {summary(fr['steps'])}. Return the steps from here: a correction "
+                         f"first if needed, then the rest (as planned or adjusted); [] if this part is complete.")
+            if new is None:
+                return say("Hm, I'm stuck on this one.")
+            fr["steps"] = new; continue
+        if a == "codex":
+            if cli:                                       # Codex ran this skill: it takes over itself
+                print(f"skill needs the slow path here ({where}): {st.get('codex_prompt')}. Done: {'; '.join(done)}")
+                return False
+            codex_ran = True; EP["codex"] = True
+        ok, info = do_step(st, text, done, last, cli)
+        if ok:
+            continue
+        if info is None:                                  # stopped / replaced: say nothing more
+            return False
+        fr["failed"] = True
+        if fr["skill"]:
+            skills_record(fr["skill"], "fail")
+        event("skill", f"failed{' in skill:' + where if where else ''}: {info[:240]}")
+        new = replan("fail", f"Step failed{' in skill:' + where if where else ''}: {summary([st])} "
+                     f"{json.dumps({k: v for k, v in st.items() if v not in (None, '')})}\nWhy: {info}\n"
+                     f"Return what to do now: a corrected retry, a say, or codex (codex_prompt: self-contained, with what failed).")
+        if new is None:
+            say("Hm, I'm stuck on this one."); return False
+        if cli and any(s["action"] == "codex" for s in new):
+            print(f"skill failed ({where}): {info}. Done: {'; '.join(done)}"); return False
+        fr["steps"] = new
+    if codex_ran and EP["id"] and not cli:               # Codex had to do it: only the person can say whether it worked
+        last = codex_agent.state().get("last") or {}
+        if last.get("ok"):
+            say("Did that work?"); episode("asked")
+    elif EP["id"] and not cli and EP["status"] == "open":
+        episode("done")
+    return True
+
+
+def skills_record(name, outcome):
+    try:
+        import skills
+        skills.record(name, outcome)
+    except Exception as e:
+        log("skills.record", e)
+
+
+def confirm_episode():
+    """The person said it worked. If Codex had to solve it, a forked Codex thread turns it into a skill (or patches one)."""
+    episode("confirmed")
+    if not EP["codex"] or not codex_agent.state()["thread"]:
+        return
+    import skills
+    snap, used = skills.snapshot(), ", ".join(dict.fromkeys(EP["skills"])) or "none"
+    task = open(f"{HERE}/prompts/refine.md").read().format(used=used, index=skills.index_text())
+    event("refine", f"learning from \"{EP['request'][:120]}\" (skills used: {used})")
+
+    def finished(reply):
+        ch = skills.changes_since(snap)
+        event("refine", "; ".join(f"skill {n} {k}" for n, k in ch) if ch else f"no skill change: {(reply or '')[:160]}")
+    codex_agent.fork(task, on_event=event, on_done=finished)
+
+
+def do_step(r, text, done, last, cli=False):
+    """One built-in step, blocking. -> (True, None) = go on; (False, None) = stopped (say nothing more);
+    (False, why) = it failed (the caller asks the model what now). done: what earlier steps did (for Codex)."""
     a, side, say_done = r["action"], r.get("side") or "auto", (r.get("say") or "").strip()
     speak = say_done or ("Done." if last else "")
 
     def say(t):                                           # what the person was told goes to Codex too
         globals()["say"](t); done.append(f'Al told the person: "{t}"')
     if a == "answer":
-        say(say_done or "Hm?"); return True
+        say(say_done or "Hm?"); return True, None
     if a == "stop":
-        interrupt_codex(); say(say_done or "Stopped."); return True
+        interrupt_codex(); say(say_done or "Stopped."); return True, None
     if a == "codex":
         if done:                                          # the arms moved: fresh state for Codex
             STATE.update(text=brief_state(rstep()), t=time.time())
@@ -552,7 +719,9 @@ def do_step(r, text, done, rest, last):
         before = f"; already done for this request: {'; '.join(done)}" if done else ""
         tell(f"[task] {r.get('codex_prompt') or text}   || heard: {text}{before}; {now}; held {json.dumps(rd_held())}",
              fresh=bool(r.get("codex_fresh")), wait=True)
-        return True
+        last_ = codex_agent.state().get("last") or {}
+        done.append(f"codex: {last_.get('reply', '')[:200]}")
+        return (True, None) if last_.get("ok") else (False, None)
     o = r.get("object")
     if a == "hold":
         if o:
@@ -566,7 +735,7 @@ def do_step(r, text, done, rest, last):
         args = [a, side] + ([str(r.get("deg") or 90)] if a != "release" else [])
     elif a == "press":
         if not o:
-            say("Where should I press?"); return False
+            return False, "press needs object (the point to press, as scene pixel + height)"
         from so101 import Robot
         h = (o.get("height_cm") or 0) / 100 - 0.02
         loc = Robot().locate(o["u"], o["v"], h)
@@ -577,17 +746,21 @@ def do_step(r, text, done, rest, last):
     elif a == "step":
         cmds = [c.strip() for c in (r.get("step") or "").split(";") if c.strip()]
         if not cmds or any(c.split()[0] not in ("goto", "move", "set", "recall", "nudge") for c in cmds):
-            say("Hm, I can't do that one."); return False
+            return False, f"step allows only goto/move/set/recall/nudge, got: {r.get('step')!r}"
         args = None
     else:
-        return True
+        return True, None
     what = "along " + " ".join(args) if args else "robot step " + "; ".join(cmds)
     if args is None:
         RUN.update(p=None, what="step"); out = ""
         for c in cmds:                                    # one robot step each: a ';' chain sums into one target
             g = c.split()
-            if g[0] == "goto" and len(g) == 5:            # coarse router guesses: the nearest point the arm really reaches
-                x, y, z = map(float, g[2:5]); rx, ry, rz = reachable(g[1], x, y, z)
+            if g[0] == "goto" and len(g) == 6 and g[2] == "px":   # goto <side> px u v z: the scene pixel at height z
+                from so101 import Robot
+                g = ["goto", g[1], *(f"{v:.3f}" for v in Robot().locate(float(g[3]), float(g[4]), float(g[5]))[g[1]])]
+                c = " ".join(g)
+            if g[0] == "goto" and len(g) == 5:            # coarse guesses: the nearest point the arm really reaches
+                x, y, z = map(float, g[2:5]); rx, ry, rz = reachable(g[1], x, y, z, drop=0.02)   # pull back, barely lower
                 if abs(rx - x) + abs(ry - y) + abs(rz - z) > 0.005:
                     c = f"goto {g[1]} {rx:.3f} {ry:.3f} {rz:.3f}"; event("skill", f"{' '.join(g)} is past the arm's reach: {c}")
             o_ = rstep(c); out += o_ + "\n"
@@ -598,27 +771,20 @@ def do_step(r, text, done, rest, last):
         p = subprocess.Popen([sys.executable, __file__, *args], cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         RUN.update(p=p, what=what); out = p.communicate()[0]; ok, killed = p.returncode == 0, p.returncode < 0
     if killed:                                            # stop / a newer request: say nothing, end the plan
-        event("skill", f"stopped: {what}"); return False
+        event("skill", f"stopped: {what}"); return False, None
     errs = robot_errs(out)
-    if errs:                                              # refused by robotd: never "Done."; Codex thinks it through
-        event("skill", "refused: " + "; ".join(errs)[:240])
-        say("Hm, tricky one, let me think.")
-        todo = "; then: " + "; ".join(x.get("codex_prompt") or x["action"] for x in rest) if rest else ""
-        tell(f"[task] {text}   || The fast path tried `{what}` and robotd refused: {'; '.join(errs)}{todo}. Its position came "
-             f"from one scene-camera guess (weak in x): re-estimate it yourself and do the task"
-             f"{' (already done: ' + '; '.join(done) + ')' if done else ''}. Already said: \"Hm, tricky one, let me think.\" "
-             f"{STATE['text'] and 'now: ' + STATE['text']}; held {json.dumps(rd_held())}", wait=True)
-        return False
+    if errs:                                              # refused by robotd: never "Done."
+        return False, f"`{what}` refused by robotd: {'; '.join(errs)}"
     event("skill", ("done: " if ok else "failed: ") + " ".join(out.split())[-240:])
     if a == "hold":
         if re.search(r"""['"]holding['"]: (True|true)""", out):
-            say(say_done or "Got it."); done.append(f"{what}: holding it"); return True
-        say("Robot error." if "FAILED" in out else "Missed it."); return False
+            say(say_done or "Got it."); done.append(f"{what}: holding it"); return True, None
+        return False, f"`{what}`: {'robot error' if 'FAILED' in out else 'missed (nothing between the jaws)'}: " + " ".join(out.split())[-200:]
     if not ok:
-        say("That didn't work."); return False
+        return False, f"`{what}` failed: " + " ".join(out.split())[-300:]
     if speak:
         say(speak)
-    done.append(f"{what}: done"); return True
+    done.append(f"{what}: done"); return True, None
 
 
 def run_manual():
@@ -727,16 +893,8 @@ def look(question, cams=("scene", "left", "right")):
     t0, model = time.time(), env("ALONG_LOOK_MODEL", "gpt-6.1-sol" if env("OPENAI_API_KEY") else "gpt-6.1-terra")
     event("look", f"[{model}{' ' + env('ALONG_LOOK_TIER', 'ultrafast') if env('OPENAI_API_KEY') else ''} · {', '.join(cams)}] {question}")
     if env("OPENAI_API_KEY"):                              # lean: just the images + question
-        import base64, requests
-        content = [{"type": "input_text", "text": brief}] + [
-            {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(open(p, "rb").read()).decode()} for p in imgs]
-        r = requests.post("https://api.openai.com/v1/responses", headers={"Authorization": f"Bearer {env('OPENAI_API_KEY')}"},
-                          json={"model": env("ALONG_LOOK_MODEL", "gpt-6.1-sol"), "service_tier": env("ALONG_LOOK_TIER", "ultrafast"),
-                                "reasoning": {"effort": "low"},
-                                "input": [{"role": "user", "content": content}]}, timeout=60)
-        r.raise_for_status()
-        ans = "".join(c.get("text", "") for o in r.json().get("output", []) if o.get("type") == "message"
-                      for c in o.get("content", [])).strip()
+        ans, _ = llm.call("look", [brief] + [(f"{os.path.basename(p)[:-4]} camera", llm.image_url(p)) for p in imgs],
+                          model=env("ALONG_LOOK_MODEL", "gpt-6.1-sol"), episode=EP["id"])
     else:                                                  # no key: Codex login; empty cwd so AGENTS.md isn't sent along
         r = subprocess.run(["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-m", env("ALONG_LOOK_MODEL", "gpt-6.1-terra"),
                             "-c", "model_reasoning_effort=low", "-o", f"{d}/answer.txt", "-i", *imgs],
@@ -953,6 +1111,18 @@ def main():
         skill(a)
     elif a[0] == "look":
         print(look(" ".join(a[1:])))
+    elif a[0] == "skill":                                 # along skill <name> ['<args>']: a learned skill, fast (Codex uses it)
+        import skills
+        if len(a) < 2 or not skills.load(a[1]):
+            sys.exit("skills: " + (", ".join(m["name"] for m in skills.index()) or "none yet"))
+        STATE.update(text=brief_state(rstep()), t=time.time())
+        st = {k: None for k in STEP_SCHEMA["required"]}
+        st.update(action="skill", skill=a[1], args=" ".join(a[2:]) or None, say="")
+        ok = run_plan([st], f"skill {a[1]} {' '.join(a[2:])}", None, PLAN["gen"], cli=True)
+        print(f"skill {a[1]}: {'done' if ok else 'not done (see above): take over'}"); sys.exit(0 if ok else 1)
+    elif a[0] == "skill-undo":                            # along skill-undo <name>: back to the version before the last change
+        import skills
+        msg = skills.undo(a[1]); event("refine", msg); print(msg)
     elif a[0] == "say":
         say(" ".join(a[1:]))
     elif a[0] == "wake":                                  # debug: force the daemon awake (see .along_force)

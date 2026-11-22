@@ -52,7 +52,12 @@ along on · along off   # (or the /along buttons); off = voice off + interrupt A
 along open · along reset · along fresh   # release both grips · stop everything, both arms to rest · Codex back to only its brief (also /along buttons)
 along hold|release|turn|tilt|press|park ...   # one-call skills Al uses (see along.py --help)
 along look "where is the toothbrush?" · along tell "[voice] hold this"   # vision · type into Al's session
+along skill press-pump 'target: soap pump' · along skill-undo press-pump   # run a learned skill · undo its last change
 ```
+**Learned skills** (`skills/<name>/SKILL.md`, skills.py): the router sees one line per skill; picking one starts a new
+turn of the same conversation (llm.py, previous_response_id) with that SKILL.md, and so do `check` steps (fresh images)
+and failed steps. When Codex was needed and the person confirms it worked, a forked Codex thread (prompts/refine.md)
+patches or creates a skill. Every model call: `.along_calls.jsonl` (the /along "Model calls" panel).
 Key: `OPENAI_API_KEY` in `.env`. Debug page: `robot stream` → `/along` (state, conversation, Codex turns, type-as-voice).
 `along run --yolo` = old mode, wakes on a new thing in the centre of the table (`along idle` first).
 

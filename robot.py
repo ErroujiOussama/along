@@ -121,7 +121,9 @@ def _caps(qd):
 
 def along_api(h, u):
     """Debug page for the along voice helper: /along, /along.json (state, detections, history, Codex state + turn log),
-    /along/scene.jpg (scene camera with the detector's boxes), /along/do?cmd=tell|say|wake|idle&text=..."""
+    /along/scene.jpg (scene camera with the detector's boxes), /along/do?cmd=tell|say|wake|idle|skill-undo&text=...,
+    /along/skills.json (skills.listing()), /along/calls.json?n=60[&sig=] (llm.calls + episode states from the events;
+    {"same": true} when sig is unchanged), /along/calls/<id>_<n>.jpg (images sent with those calls)"""
     import subprocess
     from urllib.parse import parse_qsl
     here = os.path.dirname(os.path.abspath(__file__))
@@ -174,10 +176,62 @@ def along_api(h, u):
             cv2.putText(img, txt, (d["box"][0], max(14, d["box"][1] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
             cv2.putText(img, txt, (d["box"][0], max(14, d["box"][1] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1)
         return send(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes(), "image/jpeg")
+    if u.path == "/along/skills.json":                                     # actions table: built-ins + learned skills
+        try:
+            import importlib
+            sk = sys.modules.get("skills")
+            if sk is None:
+                import skills as sk
+            elif os.path.getmtime(sk.__file__) != getattr(sk, "_dash_mtime", None):
+                sk = importlib.reload(sk)                                    # dashboard runs for days: pick up edits
+            sk._dash_mtime = os.path.getmtime(sk.__file__)
+            out = sk.listing()
+        except Exception as e:
+            out = {"error": f"{type(e).__name__}: {e}"}
+        return send(json.dumps(out, default=str).encode(), "application/json")
+    if u.path == "/along/calls.json":                                      # model calls (llm.py log) + episode states
+        q = dict(parse_qsl(u.query))
+        try:
+            import llm
+            n = max(1, min(400, int(q.get("n", 60))))
+            allc = llm.calls(10 ** 6)
+        except Exception as e:
+            return send(json.dumps({"error": f"{type(e).__name__}: {e}"}).encode(), "application/json")
+        eps = {}
+        if os.path.exists(f"{here}/.along_events.jsonl"):
+            for l in open(f"{here}/.along_events.jsonl"):
+                if '"episode"' not in l:
+                    continue
+                try:
+                    e = json.loads(l)
+                    if e.get("kind") == "episode":
+                        x = json.loads(e["text"]) if isinstance(e["text"], str) else e["text"]
+                        eps[x["id"]] = {**eps.get(x["id"], {}), **{k: v for k, v in x.items() if v is not None}, "t": e["t"]}
+                except Exception:
+                    pass
+        recs = allc[-n:]
+        sig = f"{recs[-1]['id'] if recs else ''}:{len(allc)}:{hash(json.dumps(eps, sort_keys=True))}"
+        if q.get("sig") == sig:
+            return send(json.dumps({"same": True, "sig": sig}).encode(), "application/json")
+        ids = {r["id"] for r in recs}                                      # "=<id>" instructions outside the window
+        refs = {r["instructions"][1:] for r in recs if str(r.get("instructions") or "").startswith("=")} - ids
+        instr = {r["id"]: r["instructions"] for r in allc if r["id"] in refs}
+        return send(json.dumps({"sig": sig, "calls": recs, "episodes": eps, "instr": instr}, default=str).encode(),
+                    "application/json")
+    if u.path.startswith("/along/calls/"):                                 # images logged with the calls
+        name = os.path.basename(u.path)
+        f = f"{here}/.along_calls/{name}"
+        if not name.endswith(".jpg") or name.startswith(".") or not os.path.isfile(f):
+            return h.send_error(404)
+        h.send_response(200); h.send_header("Content-Type", "image/jpeg"); h.send_header("Cache-Control", "max-age=86400")
+        body = open(f, "rb").read()
+        h.send_header("Content-Length", str(len(body))); h.end_headers(); h.wfile.write(body); return
     if u.path == "/along/do":
         q = dict(parse_qsl(u.query)); cmd = q.get("cmd", "")
-        if cmd not in ("tell", "say", "wake", "idle", "on", "off", "open", "reset", "fresh"):
+        if cmd not in ("tell", "say", "wake", "idle", "on", "off", "open", "reset", "fresh", "skill-undo"):
             return send(b'{"error": "cmd?"}', "application/json")
+        if cmd == "skill-undo" and not q.get("text"):
+            return send(b'{"error": "skill-undo needs text=<skill name>"}', "application/json")
         args = [f"{here}/.venv/bin/python", f"{here}/along.py", cmd] + ([q["text"]] if q.get("text") else [])
         subprocess.Popen(args, cwd=here, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return send(json.dumps({"started": cmd}).encode(), "application/json")

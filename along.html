@@ -11,7 +11,8 @@ header b{color:#fff} a{color:var(--blue)}
 .chip.on{color:#111;background:var(--ok);border-color:var(--ok)} .chip.warn{color:#111;background:var(--acc);border-color:var(--acc)}
 .chip.bad{color:#fff;background:var(--bad);border-color:var(--bad)}
 main{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:10px;padding:10px}
-@media (max-width:900px){main{grid-template-columns:1fr}}
+#main2{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}
+@media (max-width:900px){main,#main2{grid-template-columns:1fr}}
 section{border:1px solid var(--line);border-radius:6px;padding:8px;min-width:0}
 h3{margin:0 0 6px;font-size:13px;color:#fff;display:flex;justify-content:space-between;gap:8px}
 h3 span{color:var(--dim);font-weight:normal}
@@ -36,6 +37,25 @@ label{font-size:12px;color:var(--dim)}
 #banner.muted{background:#9a6a10} #banner.stt{background:#6b3fa8} #banner.down{background:#8b1d1d}
 #banner small{font-size:14px;font-weight:normal;opacity:.9} #vad{width:120px;height:10px;background:#0006;border-radius:5px;overflow:hidden}
 #vad i{display:block;height:100%;background:#fff}
+#calls{max-height:520px;overflow:auto;font-size:12px}
+.grp{border-top:1px solid var(--line);margin-top:4px} .grp>.gh{display:flex;gap:8px;align-items:baseline;padding:4px 2px;color:#fff;cursor:pointer;flex-wrap:wrap}
+.gh .st{font-size:11px;padding:0 6px;border-radius:8px;border:1px solid var(--line);color:var(--dim)}
+.st.open,.st.asked{color:#111;background:var(--acc);border-color:var(--acc)} .st.confirmed{color:#111;background:var(--ok);border-color:var(--ok)}
+.st.failed{color:#fff;background:var(--bad);border-color:var(--bad)} .gh .rq{color:#cfe3ff;min-width:0;overflow-wrap:anywhere}
+.call>.cr{display:grid;grid-template-columns:62px 52px 42px 96px minmax(0,1fr);gap:6px;padding:1px 2px;cursor:pointer;align-items:baseline}
+.call>.cr:hover{background:#1a1a1a} .cr .t,.cr .n{color:var(--dim);font-size:11px} .cr .s{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:#ddd}
+.cr .k{font-size:11px;text-transform:uppercase} .call.err .s{color:var(--bad)}
+.kroute{color:var(--blue)} .kskill{color:var(--acc)} .kcheck{color:var(--ok)} .kfail{color:var(--bad)} .klook{color:#d2a8ff} .kother{color:var(--dim)}
+.det{margin:2px 0 8px 10px;padding:6px;background:#0a0a0a;border-left:2px solid var(--line);border-radius:4px;display:flex;flex-direction:column;gap:6px}
+.lb,.det .lb{color:var(--dim);font-size:11px} .det pre{height:auto;max-height:360px;padding:4px}
+.det .thumbs{display:flex;gap:6px;flex-wrap:wrap} .det .thumbs a{display:flex;flex-direction:column;font-size:11px;color:var(--dim);text-decoration:none}
+.det .thumbs img{width:160px;border:1px solid var(--line)} .det .er{color:var(--bad);white-space:pre-wrap} .det .ids{color:#666;font-size:10px;overflow-wrap:anywhere}
+details>summary{cursor:pointer;color:var(--dim);font-size:11px}
+.actsw{max-height:520px;overflow:auto} #acts td{vertical-align:top} #acts tr.sk{cursor:pointer} #acts tr.sk:hover td{background:#1a1a1a}
+#acts .nm{color:#fff;white-space:nowrap} #acts td:nth-child(2){min-width:140px} #acts .ar{color:var(--dim);font-family:ui-monospace,monospace;font-size:11px}
+.tag{font-size:10px;padding:0 5px;border-radius:7px;background:var(--acc);color:#111;margin-left:4px} .tag.d{background:#333;color:var(--dim)}
+.w{color:var(--ok)} .f{color:var(--bad)} #acts tr.body td{background:#0a0a0a} #acts tr.body pre{height:auto;max-height:400px}
+@media (max-width:600px){.call>.cr{grid-template-columns:54px 46px minmax(0,1fr)} .cr .n{display:none}}
 </style></head><body>
 <header><b>along</b><span id="chips"></span><span style="flex:1"></span><a href="/">cameras</a><a href="/inspect">inspector</a></header>
 <div style="display:flex;background:#1a1a1a;gap:8px;padding:8px 10px"><button id="on" style="font-size:18px;padding:6px 22px;background:#1f6f34;color:#fff">Along ON</button><button id="off" style="font-size:18px;padding:6px 22px">Along OFF</button><span style="flex:1"></span><button id="open" style="font-size:16px;padding:6px 16px">Release grips</button><button id="fresh" style="font-size:16px;padding:6px 16px" title="Codex starts over with only its brief: forgets this conversation">Reset Al</button><button id="reset" style="font-size:16px;padding:6px 16px;background:#8b1d1d;color:#fff">Reset arms</button></div>
@@ -56,6 +76,15 @@ label{font-size:12px;color:var(--dim)}
   <section><h3>Behind the scenes <span id="actstat"></span></h3>
    <div id="act"></div></section>
   <section><h3>Codex turns <span>headless codex exec · along attach = open the thread</span></h3><pre id="codex"></pre></section>
+ </div>
+</main>
+<main id="main2">
+ <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+  <section><h3>Model calls <span id="callstat">every OpenAI call Al made · click = details</span></h3><div id="calls"></div></section>
+ </div>
+ <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+  <section><h3>Actions <span id="skstat">built-in + learned skills · click a learned one</span></h3>
+   <div class="actsw"><table id="acts"><thead><tr><th>name</th><th>use when</th><th>stats</th></tr></thead><tbody id="actsb"></tbody></table></div></section>
  </div>
 </main>
 <script>
@@ -100,7 +129,7 @@ async function poll() {
       `<span><b>${k}</b> ${s?.held?.[k] ? `<span class="chip on">holds ${esc(s.held[k])}</span>` : ''} gripper ${a.gripper_target} ${a.holding ? '<span class="chip on">HOLDING</span>' : ''} tip ${a.tip.map(v => v.toFixed(3)).join(' ')}</span>`).join('');
     if (d.events.length && d.events[d.events.length - 1].t !== lastEv) {
       lastEv = d.events[d.events.length - 1].t;
-      const row = e => `<div class="ev ${e.kind}"><span class="t">${hm(e.t)}</span><span class="k">${{heard: 'you', say: 'Al →', tell: '→ codex', held: 'holds', ignored: 'chatter', look: 'vision?', seen: 'vision', live: 'Al said', codex: 'codex', aim: 'aim', skill: 'skill', sys: 'system'}[e.kind] || e.kind}</span><span class="x">${esc(e.text)}</span></div>`;
+      const row = e => `<div class="ev ${e.kind}"><span class="t">${hm(e.t)}</span><span class="k">${{heard: 'you', say: 'Al →', tell: '→ codex', held: 'holds', ignored: 'chatter', look: 'vision?', seen: 'vision', live: 'Al said', codex: 'codex', aim: 'aim', skill: 'skill', sys: 'system', episode: 'episode', check: 'check', turn: 'turn', refine: 'skills'}[e.kind] || e.kind}</span><span class="x">${esc(e.text)}</span></div>`;
       $('conv').innerHTML = d.events.filter(e => CONV.has(e.kind)).map(row).join('');
       $('act').innerHTML = d.events.filter(e => !CONV.has(e.kind) || e.kind === 'error').slice(-250).map(row).join('');
       if (stick) $('conv').scrollTop = 1e9;
@@ -123,4 +152,124 @@ $('reset').onclick = () => confirm('Stop Al, open both grippers and move both ar
 $('fresh').onclick = () => confirm('Reset Al? Codex forgets this conversation; the next task starts from only its brief (arms stay put).') && doit('fresh');
 $('wake').onclick = () => doit('wake');
 $('idle').onclick = () => confirm('Store what the scene shows now as the idle baseline?') && doit('idle');
+// ---- Model calls (llm.py log), grouped by episode, keyed by call id so expanded rows survive polls ----
+const ago = t => { const s = Date.now() / 1000 - t; return s < 90 ? s.toFixed(0) + ' s' : s < 5400 ? (s / 60).toFixed(0) + ' min' : s < 172800 ? (s / 3600).toFixed(0) + ' h' : (s / 86400).toFixed(0) + ' d'; };
+const KCLS = {route: 'kroute', skill: 'kskill', check: 'kcheck', fail: 'kfail', look: 'klook'};
+let callSig = '', callById = {}, instrById = {};
+const callEl = {}, grpEl = {};
+function actName(a) {
+  if (typeof a === 'string') return a;
+  if (!a || typeof a !== 'object') return String(a);
+  const n = a.action || a.type || a.kind || '?', sub = a.skill || a.name;
+  return sub && sub !== n ? `${n}:${sub}` : n;
+}
+function summary(c) {
+  if (c.error && c.output == null) return c.error;
+  const o = c.output;
+  if (o == null) return '';
+  if (typeof o === 'string') return o.slice(0, 100);
+  const acts = Array.isArray(o) ? o : o.actions || o.steps || o.plan;
+  if (Array.isArray(acts)) return acts.map(actName).join(' → ');
+  if (o.action) return actName(o);
+  return JSON.stringify(o).slice(0, 100);
+}
+const instrText = id => callById[id]?.instructions ?? instrById[id];
+function detail(c) {
+  const d = document.createElement('div'); d.className = 'det';
+  let h = '';
+  if (c.instructions) {
+    if (String(c.instructions).startsWith('=')) {
+      const ref = c.instructions.slice(1), txt = instrText(ref);
+      h += `<details><summary>instructions: same as call ${esc(ref)} (${txt == null ? 'not loaded' : txt.length + ' chars'})</summary>${txt == null ? '' : `<pre>${esc(txt)}</pre>`}</details>`;
+    } else h += `<details><summary>instructions (${c.instructions.length} chars)</summary><pre>${esc(c.instructions)}</pre></details>`;
+  }
+  const imgs = [];
+  (c.input || []).forEach((p, i) => {
+    if (p.text != null) h += `<div><div class="lb">input ${i}</div><pre>${esc(p.text)}</pre></div>`;
+    else if (p.image) imgs.push(`<a href="/along/calls/${encodeURIComponent(p.image)}" target="_blank"><img loading="lazy" src="/along/calls/${encodeURIComponent(p.image)}" alt="${esc(p.label || '')}">${esc(p.label || p.image)}</a>`);
+    else if ('image' in p) imgs.push(`<span class="lb">${esc(p.label || 'image')}: not saved</span>`);
+  });
+  if (imgs.length) h += `<div><div class="lb">images</div><div class="thumbs">${imgs.join('')}</div></div>`;
+  if (c.output != null) h += `<div><div class="lb">output</div><pre>${esc(typeof c.output === 'string' ? c.output : JSON.stringify(c.output, null, 1))}</pre></div>`;
+  if (c.error) h += `<div class="er">${esc(c.error)}</div>`;
+  h += `<div class="ids">${esc(c.id)} · ${esc(c.model || '')} ${esc(c.tier || '')} · prev ${esc(c.prev || '-')} · resp ${esc(c.resp || '-')}</div>`;
+  d.innerHTML = h; return d;
+}
+function callNode(c) {
+  const el = document.createElement('div'); el.className = 'call' + (c.error ? ' err' : '');
+  const u = c.usage || {}, tok = u.input == null ? '' : `${u.input}/${u.cached ?? 0}/${u.output ?? 0}`;
+  el.innerHTML = `<div class="cr"><span class="t">${hm(c.t)}</span><span class="k ${KCLS[c.kind] || 'kother'}">${esc(c.kind)}</span><span class="n">${c.secs ?? ''}s</span><span class="n" title="tokens in / cached / out">${tok}</span><span class="s">${esc(summary(c))}</span></div>`;
+  el.firstChild.onclick = () => { if (el.det) { el.det.hidden = !el.det.hidden; } else { el.det = detail(c); el.appendChild(el.det); } };
+  return el;
+}
+function grpNode(key) {
+  const g = document.createElement('div'); g.className = 'grp';
+  g.innerHTML = '<div class="gh"></div><div class="gb"></div>';
+  g.firstChild.onclick = () => { const b = g.lastChild; b.hidden = !b.hidden; };
+  return g;
+}
+async function pollCalls() {
+  try {
+    const d = await (await fetch('/along/calls.json?' + new URLSearchParams({n: 60, sig: callSig}), {cache: 'no-store'})).json();
+    if (d.error) $('callstat').textContent = 'calls: ' + d.error;
+    else if (!d.same) {
+      callSig = d.sig; instrById = d.instr || {}; callById = {};
+      d.calls.forEach(c => callById[c.id] = c);
+      const groups = new Map();                     // newest first: groups ordered by their newest call
+      d.calls.slice().reverse().forEach(c => { const k = c.episode ?? ''; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); });
+      const box = $('calls'), keepG = new Set(), keepC = new Set();
+      for (const [k, cs] of groups) {
+        keepG.add(k);
+        const g = grpEl[k] || (grpEl[k] = grpNode(k)), ep = d.episodes?.[k];
+        const tot = cs.reduce((a, c) => a + (c.secs || 0), 0);
+        g.firstChild.innerHTML = k === '' ? `<span>no episode</span><span class="lb">${cs.length} calls</span>`
+          : `<span class="st ${esc(ep?.status || '')}">${esc(ep?.status || 'episode')}</span><span class="rq">${esc(ep?.request || k)}</span><span style="color:var(--dim);font-size:11px">${cs.length} calls · ${tot.toFixed(1)} s</span>`;
+        box.appendChild(g);
+        for (const c of cs) { keepC.add(c.id); g.lastChild.appendChild(callEl[c.id] || (callEl[c.id] = callNode(c))); }
+      }
+      for (const k in grpEl) if (!keepG.has(k)) { grpEl[k].remove(); delete grpEl[k]; }
+      for (const id in callEl) if (!keepC.has(id)) { callEl[id].remove(); delete callEl[id]; }
+      if (!d.calls.length) box.innerHTML = '<span class="lb">no model calls logged yet</span>';
+      else box.querySelector(':scope > .lb')?.remove();
+      $('callstat').textContent = `${d.calls.length} newest calls · tokens in/cached/out · click = details`;
+    }
+  } catch (e) { $('callstat').textContent = 'calls: unreachable'; }
+  setTimeout(pollCalls, 3000);
+}
+pollCalls();
+// ---- Actions table: built-ins + learned skills (skills.listing()) ----
+const openSk = new Set(); let skSig = '';
+function stats(s) {
+  if (!s) return '';
+  const last = Math.max(s.last_patch || 0, s.created || 0);
+  return `${s.uses ?? 0} uses · <span class="w">✓${s.wins ?? 0}</span> <span class="f">✗${s.fails ?? 0}</span> · ${s.patches ?? 0} patches${last ? ' · changed ' + ago(last) + ' ago' : ''}${s.last_used ? ' · used ' + ago(s.last_used) + ' ago' : ''}`;
+}
+const args = a => !a ? '' : typeof a === 'string' ? a : Array.isArray(a) ? a.map(x => typeof x === 'string' ? x : x.name || JSON.stringify(x)).join(', ') : Object.keys(a).join(', ');
+function renderSkills(d) {
+  if (d.error) { $('actsb').innerHTML = `<tr><td colspan="3" style="color:var(--dim)">skills: unavailable (${esc(d.error)})</td></tr>`; return; }
+  let h = (d.builtins || []).map(b => `<tr><td class="nm">${esc(b.name)}<span class="tag d">built-in</span></td><td>${esc(b.use_when || '')}${b.args ? `<div class="ar">${esc(args(b.args))}</div>` : ''}</td><td></td></tr>`).join('');
+  for (const s of d.skills || []) {
+    const op = openSk.has(s.name);
+    h += `<tr class="sk" data-n="${esc(s.name)}"><td class="nm">${op ? '▾' : '▸'} ${esc(s.name)}<span class="tag">learned</span>${s.direct ? '<span class="tag d">direct</span>' : ''}</td><td>${esc(s.use_when || '')}${s.args ? `<div class="ar">${esc(args(s.args))}</div>` : ''}</td><td style="font-size:11px;min-width:120px">${stats(s.stats)}</td></tr>`;
+    if (op) h += `<tr class="body"><td colspan="3"><div class="lb" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px"><span style="color:var(--dim);font-size:11px">${esc(s.path || '')} · ${(s.history || []).length} snapshots</span><button data-undo="${esc(s.name)}" ${(s.history || []).length ? '' : 'disabled'}>Undo last change</button></div><pre>${esc(s.body || '')}</pre></td></tr>`;
+  }
+  $('actsb').innerHTML = h || '<tr><td colspan="3">no actions</td></tr>';
+  $('skstat').textContent = `${(d.builtins || []).length} built-in · ${(d.skills || []).length} learned · click a learned one`;
+}
+let skData = null;
+$('actsb').onclick = e => {
+  const u = e.target.closest('[data-undo]');
+  if (u) { if (confirm(`Undo the last change to skill "${u.dataset.undo}"?`)) doit('skill-undo', u.dataset.undo).then(() => setTimeout(pollSkills, 800, true)); return; }
+  const r = e.target.closest('tr.sk'); if (!r) return;
+  const n = r.dataset.n; openSk.has(n) ? openSk.delete(n) : openSk.add(n);
+  if (skData) renderSkills(skData);
+};
+async function pollSkills(once) {
+  try {
+    const t = await (await fetch('/along/skills.json', {cache: 'no-store'})).text();
+    if (t !== skSig) { skSig = t; skData = JSON.parse(t); renderSkills(skData); }
+  } catch (e) { $('actsb').innerHTML = '<tr><td colspan="3" style="color:var(--dim)">skills: unavailable</td></tr>'; skSig = ''; }
+  if (!once) setTimeout(pollSkills, 5000);
+}
+pollSkills();
 </script></body></html>
