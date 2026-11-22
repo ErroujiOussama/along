@@ -69,6 +69,9 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,360px) 
 .who{font-size:11px;color:var(--faint);margin:8px 6px 2px} .who .ty{color:var(--acc)}
 .chat-sys{align-items:center} .chat-sys span{font-size:11px;color:var(--faint);margin:8px 0 4px}
 .chat-sys.err span{color:var(--bad)}
+.chat-sys.reset span{color:var(--acc);font-weight:600;border-top:1px solid var(--acc);border-bottom:1px solid var(--acc);padding:3px 12px}
+#chat .forgot{opacity:.35;filter:grayscale(1)}
+.btn.reseta{border-color:var(--acc);color:var(--acc);font-weight:600}
 .chatter .bub{background:none;border:1px dashed var(--line);color:var(--faint);font-size:12px;cursor:pointer;max-height:3.2em;overflow:hidden}
 .chatter.open .bub{max-height:none}
 .pend .bub{opacity:.65;font-style:italic}
@@ -144,7 +147,7 @@ th{color:var(--dim);font-weight:normal} tr.new td:first-child{color:var(--ok)}
  <div id="ctl">
   <div class="seg" title="voice session"><button id="on">ON</button><button id="off">OFF</button></div>
   <button class="btn" id="open" title="open both grippers">Release grips</button>
-  <button class="btn" id="fresh" title="Codex starts over with only its brief: forgets this conversation (arms stay put)">Reset Al</button>
+  <button class="btn reseta" id="fresh" title="Al forgets everything: Codex, router history, episode and the voice conversation (arms stay put)">Reset Al</button>
   <button class="btn danger" id="reset" title="stop Al, open both grippers, move both arms to rest">Reset arms</button>
   <span class="links"><a href="/">cameras</a><a href="/inspect">inspector</a></span>
  </div>
@@ -323,6 +326,7 @@ function buildCards(events, calls) {
     const k = e.kind, x = e.text || '';
     if (['live', 'wake', 'idle', 'ignored'].includes(k)) continue;
     if (k === 'sys' && SKIP_SYS.test(x)) continue;
+    if (k === 'sys' && /^Al reset:/.test(x)) { if (cur) push(cur, e, {k: 'status', tag: 'reset', html: '↺ Al reset: this episode is forgotten'}); cur = null; pendHeard = []; continue; }
     if (k === 'held' && (x === '{}' || !x)) continue;
     if (k === 'heard') { pendHeard.push(e); pendHeard = pendHeard.filter(h => e.t - h.t < 25); continue; }
     if (k === 'episode') {
@@ -464,9 +468,11 @@ $('tl').addEventListener('click', e => {
 });
 
 // ---------- conversation ----------
+let lastReset = 0;                       // newest "Al reset": everything before it is forgotten by Al
 function renderChat() {
   const sc = $('chatsc'), stick = atBottom(sc), ev = D.events, items = [];
   let prevWho = null, prevT = 0; const seq = {};
+  const RST = /^Al reset:/; lastReset = Math.max(0, ...ev.filter(v => v.kind === 'sys' && RST.test(v.text || '')).map(v => v.t));
   ev.forEach((e, i) => {
     const k = e.kind, x = e.text || '', b = 'c' + e.t + k, key = b + '_' + (seq[b] = (seq[b] || 0) + 1);
     if (k === 'say') {              // planned speech: shown unless GPT-Live actually spoke it right after
@@ -478,11 +484,12 @@ function renderChat() {
     else if (k === 'live' || k === 'say') { who = 'al'; html = `<div class="bub">${esc(x)}</div>`; if (k === 'say' && now() - e.t < 15) who = 'al pend'; }
     else if (k === 'ignored') { who = 'chatter'; html = `<div class="bub" title="room chatter: not addressed to Al (click to expand)">${esc(x)}</div>`; }
     else if (k === 'wake' || k === 'idle') { items.push({key, cls: 'chat-sys', html: `<span>${k === 'wake' ? 'Al on' : 'Al off'} · ${esc(x || (k === 'wake' ? 'woke' : 'idle'))} · ${hmm(e.t)}</span>`}); prevWho = null; return; }
+    else if (k === 'sys' && RST.test(x)) { items.push({key, cls: 'chat-sys reset', html: `<span>↺ Al reset · Codex, router, episode and voice forgot everything above · ${hmm(e.t)}</span>`}); prevWho = null; return; }
     else if (k === 'error') { items.push({key, cls: 'chat-sys err', html: `<span>${esc(x)} · ${hmm(e.t)}</span>`}); prevWho = null; return; }
     else return;
     const base = who.split(' ')[0], showWho = base !== prevWho || e.t - prevT > 60;
     const label = base === 'me' ? 'person' + (who.includes('typed') ? ' <span class="ty">typed</span>' : '') : base === 'al' ? 'Al' : 'room chatter (ignored)';
-    items.push({key, cls: who, html: (showWho ? `<div class="who">${label} · ${hm(e.t)}</div>` : '') + html});
+    items.push({key, cls: who + (e.t < lastReset ? ' forgot' : ''), html: (showWho ? `<div class="who">${label} · ${hm(e.t)}</div>` : '') + html});
     prevWho = base; prevT = e.t;
   });
   if (!items.length) items.push({key: 'empty', cls: 'empty', html: 'Nothing said yet.'});
@@ -508,7 +515,9 @@ function renderTop() {
   // now: current episode + what is happening
   const c = lastCards[lastCards.length - 1], cx = d.codex || {}, working = !!cx.pid || !!s?.busy;
   let l1 = '', l2 = '';
-  if (c) {
+  if (c && lastReset >= c.t1) {
+    l1 = `<span class="st" style="color:var(--acc)">↺ reset</span><span class="rq" style="color:var(--dim)">Al forgot everything at ${hm(lastReset)}: next request starts fresh</span>`;
+  } else if (c) {
     const st = c.status || (c.id ? 'open' : '');
     l1 = `${st ? `<span class="st ${esc(st)}">${esc(st)}</span>` : ''}<span class="rq">${esc(cardTitle(c))}</span><span class="st">${ago(c.t1)} ago</span>`;
   } else l1 = '<span class="rq" style="color:var(--dim)">no episode yet</span>';
@@ -528,7 +537,7 @@ function renderTop() {
   else ah = ['left', 'right'].map(k => { const a = d.arms?.[k]; if (!a) return '';
     return `<span class="arm"><span class="dot ${k[0]}"></span><b>${k}</b>grip ${Math.round(a.gripper_target)}%${a.holding ? ' <span class="st hold">HOLDING</span>' : ''}${s?.held?.[k] ? ` <span class="st hold">holds ${esc(s.held[k])}</span>` : ''} · tip ${a.tip.map(v => v.toFixed(2)).join(' ')}</span>`; }).join('');
   if ($('arms')._h !== ah) { $('arms').innerHTML = ah; $('arms')._h = ah; }
-  $('chatsub').textContent = s ? (s.voice ? s.voice + ' · ' : '') + (s.active ? 'listening' : 'mic off') : '';
+  $('chatsub').textContent = (s ? (s.voice ? s.voice + ' · ' : '') + (s.active ? 'listening' : 'mic off') : '') + (lastReset ? ` · remembers since ${hm(lastReset)}` : '');
 }
 $('now').onclick = () => { if (narrowQ.matches) { tab = 'tl'; layout(); } const c = lastCards[lastCards.length - 1]; if (c) { cardOpen.set(c.key, true); renderTimeline(); $('tlsc').scrollTop = 1e9; } };
 
@@ -638,7 +647,7 @@ $('say').onsubmit = e => { e.preventDefault(); const t = $('txt').value.trim(), 
 $('on').onclick = () => doit('on'); $('off').onclick = () => doit('off');
 $('open').onclick = () => doit('open');
 $('reset').onclick = () => confirm('Stop Al, open both grippers and move both arms to rest?') && doit('reset');
-$('fresh').onclick = () => confirm('Reset Al? Codex forgets this conversation; the next task starts from only its brief (arms stay put).') && doit('fresh');
+$('fresh').onclick = () => confirm('Reset Al? Codex, the router and the voice forget this conversation (arms stay put).') && doit('fresh');
 $('wake').onclick = () => doit('wake');
 $('idle').onclick = () => confirm('Store what the scene shows now as the idle baseline?') && doit('idle');
 </script></body></html>

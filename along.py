@@ -220,11 +220,13 @@ class LiveVoice:
                     except Exception:
                         return
                 pos += len(lines)
-        started, said = False, ""
+        started, said, t_start = False, "", time.time()
         try:
             for raw in ws:
                 if not self.on.is_set():
                     break
+                if reset_t() > t_start:                   # Reset Al: reconnect with an empty context
+                    event("sys", "voice context cleared (Reset Al)"); break
                 e = json.loads(raw); k = e.get("type")
                 if k == "session.started" and not started:
                     started = True; self.phase = "listening"; log("live session", e["session"]["id"]); event("sys", "voice session up (GPT-Live)")
@@ -297,8 +299,21 @@ def interrupt_codex():
     BUSY.clear(); event("sys", "Codex interrupted (running turn and skills stopped)")
 
 
+RESET = f"{HERE}/.along_reset"                           # mtime = last "Reset Al": everything before it is forgotten
+
+
+def reset_t():
+    try:
+        return os.path.getmtime(RESET)
+    except FileNotFoundError:
+        return 0.0
+
+
 def codex_fresh():
-    codex_agent.fresh(); event("sys", "Codex context cleared: the next task starts from only the brief")
+    """Reset Al: Codex back to its brief; the router's conversation/activity history, the open episode and the voice
+    session (GPT-Live reconnects with an empty context) all start over. Arms stay put."""
+    codex_agent.fresh(); open(RESET, "w").close()
+    event("sys", "Al reset: Codex, router history, episode and voice context cleared")
 
 
 def tell(text, fresh=False, wait=False):
@@ -551,7 +566,7 @@ def frames(cams=("scene", "left", "right")):
 def recent():
     """Recent conversation and recent activity (router decisions, Codex tasks + commands + turn ends, skill results)."""
     try:
-        ev = [json.loads(l) for l in open(EVENTS).readlines()[-150:] if l.strip()]
+        ev = [e for e in (json.loads(l) for l in open(EVENTS).readlines()[-150:] if l.strip()) if e["t"] > reset_t()]
     except FileNotFoundError:
         return "", ""
     lab = {"heard": "person", "say": "Al", "live": "Al"}
@@ -572,6 +587,8 @@ def episode(status, **k):
 
 
 def episode_ctx():
+    if EP["id"] and EP.get("t", 0) < reset_t():           # Reset Al since it opened: forgotten
+        EP.update(id=None, request="", status="", codex=False, skills=[])
     if not EP["id"] or EP["status"] in ("confirmed", "dropped"):
         return "Open episode: none."
     return (f"Open episode: \"{EP['request'][:200]}\" ({EP['status']}{', Al asked whether it worked' if EP['status'] == 'asked' else ''}"
@@ -624,7 +641,7 @@ def act(plan, text, answered=False):
     elif real and (ep == "new" or not EP["id"] or EP["status"] in ("confirmed", "dropped")):
         if EP["id"] and EP["status"] not in ("confirmed", "dropped", "done"):
             episode("dropped")
-        EP.update(id=f"e{time.time():.0f}", request=text, codex=False, skills=[]); episode("open")
+        EP.update(id=f"e{time.time():.0f}", request=text, codex=False, skills=[], t=time.time()); episode("open")
     if plan.get("_rid") and ep != "none" and EP["id"]:
         llm.tag(plan["_rid"], EP["id"])
     if not steps:
