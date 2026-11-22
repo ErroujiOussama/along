@@ -1403,7 +1403,7 @@ def skill(a):
         print(re.sub(r"^ERR .*tip ended.*$", "", o, flags=re.M))
         tz = getattr(Robot(), side).tip()[2]
         print(f"press: contact, the tip stopped at z {tz:.3f} (aimed {max(z - depth, 0.0):.3f})"
-              if len(robot_errs(o)) > len(bad) else f"press: reached z {tz:.3f} without resistance")
+              if len(robot_errs(o)) > len(bad) else f"press: went the full depth to z {tz:.3f} (a pump head that gives way looks the same as a miss)")
         time.sleep(0.8)
         print(rstep(f"goto {side} {rx:.3f} {ry:.3f} {rz:.3f}"))             # always lift clear again
         if bad:
