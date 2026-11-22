@@ -568,9 +568,12 @@ def skill(a):
         for attempt in (1, 2):
             ask = threading.Timer(4.0, say, args=("Ready, put it between my jaws.",)) if attempt == 1 else None
             ask and ask.start()                     # only if it is not already in there (offer closes once it sits still)
-            r = json.loads(subprocess.run(["robot", "offer", side, str(x), str(y), str(z), "90" if flat else "0"],
-                                          capture_output=True, text=True).stdout or '{"holding": false}')
+            o = subprocess.run(["robot", "offer", side, str(x), str(y), str(z), "90" if flat else "0"], capture_output=True, text=True)
             ask and ask.cancel()
+            try:
+                r = json.loads(o.stdout)
+            except ValueError:                      # robotd down etc.: not a miss, say what broke
+                sys.exit(f"hold {side} FAILED (robot error, not a miss): {(o.stderr or o.stdout).strip()[-300:]}")
             if r.get("holding"):
                 set_held(side, what); break
             if attempt == 1:
