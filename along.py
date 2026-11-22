@@ -489,7 +489,7 @@ This is a conversation: later turns of it may give you (a) a learned skill's SKI
 (b) a check: fresh images and a question, (c) a failed step and why. Each time return the steps from that point on
 (after a failure: a corrected retry, or a say). You see the images and the scene camera is calibrated: do tasks
 yourself, grasps included (e.g. "pick up the cup" = goto above it, open, check, down, close). This is a collaboration:
-when something is hard or out of reach for the arms, ask the person to help in a say ("Can you hold it a bit closer?"). Prefer a learned skill when one fits. Fill each
+when something is hard or out of reach for the arms, use ask. Prefer a learned skill when one fits. Fill each
 step's fields; unused fields = null. Be decisive: unclear = the most likely action. People here are trained: never warn,
 never refuse, no safety talk.
 
@@ -516,6 +516,8 @@ Actions:
   a turn with new images and return the corrected / remaining steps. At most one per plan, before the step that needs precision.
 - skill: a learned skill (list below): skill = its name, args = the values its args line asks for (free text). You
   then get a turn with its SKILL.md and return its concrete steps.
+- ask: ask the person to help (say = the request, e.g. "Can you hold it a bit closer?"); the plan pauses until they
+  reply, and their reply continues the same goal.
 - answer: only talk: questions about the scene, the arms. say = the answer. Greetings, thanks and small talk: a short reply,
   or "" if Al's last line in the conversation already answered it
   (the voice model already answers those itself; saying it again doubles it).
@@ -548,7 +550,7 @@ STEP_SCHEMA = {"type": "object", "additionalProperties": False,
                  "codex_prompt", "codex_fresh"],
     "properties": {
         "action": {"type": "string", "enum": ["hold", "release", "turn", "tilt", "press", "open", "park", "reset", "stop",
-                                              "step", "check", "skill", "answer", "codex", "none"]},
+                                              "step", "check", "skill", "answer", "ask", "codex", "none"]},
         "side": {"type": ["string", "null"], "enum": ["left", "right", "auto", None]},
         "what": {"type": ["string", "null"]}, "deg": {"type": ["number", "null"]}, "depth_cm": {"type": ["number", "null"]},
         "step": {"type": ["string", "null"]},
@@ -729,7 +731,7 @@ def act(plan, text, answered=False):
         open(f"{HERE}/.along_grab", "w").close()          # "it's in": the waiting hold closes now and checks HOLDING itself
         event("skill", "hold: told the object is in, closing"); return
     t = plan.get("target")
-    if t and any(st["action"] not in ("answer", "check") for st in steps):   # feasibility: the target in reach of an arm?
+    if t and any(st["action"] not in ("answer", "ask", "check") for st in steps):   # feasibility: the target in reach of an arm?
         from so101 import Robot
         loc = Robot().locate(t["u"], t["v"], t["height_cm"] / 100 - 0.02)
         if min(geo_off(*loc[sd]) for sd in ("left", "right")) > 0.04:
@@ -785,6 +787,9 @@ def run_plan(steps, text, rid, gen, cli=False):
         st = fr["steps"].pop(0)
         a, where = st["action"], " › ".join(f["skill"] for f in stack if f["skill"])
         last = all(not f["steps"] for f in stack)
+        if a == "ask":                                    # collaboration: the person helps, their reply continues the goal
+            say((st.get("say") or "").strip() or "Can you help me with this?")
+            episode("open"); return False
         if a == "skill":
             name, chain = (st.get("skill") or "").strip().removeprefix("skill:"), [f["skill"] for f in stack if f["skill"]]
             import skills
@@ -839,7 +844,7 @@ def run_plan(steps, text, rid, gen, cli=False):
             continue
         new = replan("fail", f"Step failed{' in skill:' + where if where else ''}: {summary([st])} "
                      f"{json.dumps({k: v for k, v in st.items() if v not in (None, '')})}\nWhy: {info}\n"
-                     f"Return what to do now: a corrected retry, or a say that asks the person to help.")
+                     f"Return what to do now: a corrected retry, or ask.")
         if new is None:
             say("Hm, I'm stuck on this one."); return False
         if cli and any(s["action"] == "codex" for s in new):
