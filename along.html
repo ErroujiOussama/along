@@ -166,11 +166,8 @@ th{color:var(--dim);font-weight:normal} tr.new td:first-child{color:var(--ok)}
  <section class="pane side" id="p-scene">
   <div class="ph sidetabs"><button class="tab" data-side="scene">Scene</button><button class="tab" data-side="raw">Raw log</button></div>
   <div class="scroll"><div id="scenebox">
-   <img id="scene" alt="scene camera with detection boxes">
-   <div class="legend" id="legend"><i style="color:#3cdc3c">green</i> new (wakes it) · <i style="color:#e6aa3c">orange</i> known · <i style="color:#c83cc8">magenta</i> on an arm (ignored) · <i style="color:#3cc8e6">cyan</i> wake zone · <i style="color:#888">grey</i> idle baseline</div>
+   <img id="scene" alt="scene camera">
    <div class="kv" id="snap"></div>
-   <div id="detwrap"><table><thead><tr><th>label</th><th>conf</th><th>px (locate)</th><th>box</th></tr></thead><tbody id="dets"></tbody></table>
-    <div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" id="wake">Force wake</button><button class="btn sm" id="idle" title="clear the table first">Store idle baseline</button></div></div>
   </div></div>
  </section>
  <section class="pane side" id="p-raw">
@@ -498,7 +495,7 @@ function renderTop() {
   const d = D, s = d.seen, age = s ? d.now - s.t : null, why = (s?.why || []).join(', ');
   let cls, big, small;
   if (!d.daemon || !s || age > 5) { cls = 'down'; big = 'NOT RUNNING'; small = d.daemon ? `daemon state ${age == null ? '?' : age.toFixed(0)} s old` : 'along run is not running'; }
-  else if (!s.active) { cls = 'off'; big = 'OFF'; small = s.manual ? 'mic off · press ON to talk' : `idle · wakes on something new (${((s.change || 0) * 100).toFixed(1)}%)`; }
+  else if (!s.active) { cls = 'off'; big = 'OFF'; small = 'mic off · press ON to talk'; }
   else if (s.mic === 'muted' || s.speaking) { cls = 'muted'; big = 'AL TALKING'; small = 'mic muted while Al speaks'; }
   else if (s.stt) { cls = 'stt'; big = 'TRANSCRIBING'; small = 'turning speech into text'; }
   else if (s.mic === 'speech') { cls = 'speech'; big = 'HEARING YOU'; small = 'speech detected'; }
@@ -538,16 +535,10 @@ $('now').onclick = () => { if (narrowQ.matches) { tab = 'tl'; layout(); } const 
 
 // ---------- scene tab ----------
 function renderScene() {
-  const d = D, s = d.seen, man = !!s?.manual;
-  $('legend').hidden = $('detwrap').hidden = man;
+  const d = D, s = d.seen;
   const snap = s?.state_t ? `arm snapshot ${(d.now - s.state_t).toFixed(0)} s old: <b>${esc(s.state || '')}</b>` : 'no arm snapshot (only while ON)';
-  const sh = snap + (man ? '' : ` · ${(d.idle || []).length} baseline boxes · new-object hits ${(s?.hits || []).filter(Boolean).length}/4 (3 wake)`);
+  const sh = snap;
   if ($('snap')._h !== sh) { $('snap').innerHTML = sh; $('snap')._h = sh; }
-  if (!man) {
-    const nb = new Set((s?.new || []).map(x => x.box.join()));
-    const h = (s?.all || []).map(x => `<tr class="${nb.has(x.box.join()) ? 'new' : ''}"><td>${esc(x.label)}</td><td>${x.conf.toFixed(2)}</td><td>${x.px.join(', ')}</td><td>${x.box.join(' ')}</td></tr>`).join('');
-    if ($('dets')._h !== h) { $('dets').innerHTML = h; $('dets')._h = h; }
-  }
 }
 (async function scene() { for (;;) { if (sceneVisible()) { try {
   const r = await fetch('/along/scene.jpg?' + Date.now(), {cache: 'no-store'});
@@ -605,6 +596,4 @@ $('on').onclick = () => doit('on'); $('off').onclick = () => doit('off');
 $('open').onclick = () => doit('open');
 $('reset').onclick = () => confirm('Stop Al, open both grippers and move both arms to rest?') && doit('reset');
 $('fresh').onclick = () => confirm('Reset Al? Codex, the router and the voice forget this conversation (arms stay put).') && doit('fresh');
-$('wake').onclick = () => doit('wake');
-$('idle').onclick = () => confirm('Store what the scene shows now as the idle baseline?') && doit('idle');
 </script></body></html>

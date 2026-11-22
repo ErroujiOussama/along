@@ -8,7 +8,6 @@ dependencies = [
     "placo==0.12.0",          # kinematics (newer than lerobot's own placo extra allows)
     "opencv-python-headless",
     "numpy",
-    "ultralytics>=8.4.123",
     "requests>=2.34.2",
     "silero-vad>=6.2.3",
     "jeepney>=0.9.0",

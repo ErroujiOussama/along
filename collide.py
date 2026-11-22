@@ -81,7 +81,7 @@ def _box_capsule(c, size):
 
 
 def setup():
-    """DEFAULTS <- scene.json (agent calibration, prompts/calibrate.md) <- setup.json (manual overrides). Cached by mtime."""
+    """DEFAULTS <- scene.json (robot calibrate) <- setup.json (manual overrides). Cached by mtime."""
     key = tuple(os.path.getmtime(f) if os.path.exists(f) else 0 for f in (SCENE, SETUP))
     if _cache.get("key") == key:
         return dict(_cache["s"])

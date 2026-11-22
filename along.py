@@ -1,38 +1,31 @@
 #!/usr/bin/env python3
-"""along — voice helper around the arms. Idle: only a cheap detector watches the scene camera.
-Voice = GPT-Live (speech-to-speech; it hands robot/vision work to Codex) only while switched on (or, with --yolo, while an object of interest is there: a new object (not in
-the idle baseline, 3 of 4 frames to start, kept 8 s after it was last seen) or an arm holding/offering. What you say goes to
+"""along — voice helper around the arms.
+Voice = GPT-Live (speech-to-speech) while switched on (along on / along off). What you say goes to
 a fast router (one gpt-6.1-sol call: runs a skill itself) or, for anything else, a headless Codex turn (codex_agent.py,
 brief prompts/along.md) which acts with `robot`; its final message is spoken.
 
   along attach           open Al's current Codex conversation in the Codex TUI (codex resume)
   along run              the daemon (mic + Codex bridge), switched by hand: along on / along off (or /along buttons)
-  along run --yolo       instead wake on the scene camera (new thing in the centre of the table)
-  along idle             store what the scene shows now as the idle baseline (empty table + fixtures)
-  along see              latest detections (label, conf, scene px in the 800x450 tile for `robot locate`)
   along look "question"  ask GPT 6.1 sol (ultrafast) about the current scene + wrist frames (~2 s): what is where, orientation,
                          is it between the jaws. Scene px answers fit `robot locate`.
   along say "text"       have GPT-Live say this (only while switched on)
   along tell "text"      send a line to the Codex session (what the daemon does with speech)
   along held left toothbrush | along held left none    record what an arm holds (keeps along active; shown on /along)
-  along wake             force the running daemon awake (debugging)
 Skills (one call per request; each ends with a robot step: state lines + snap_all.jpg):
   along hold <side> [what] [flat] [x y z]   offer + wait + close + record (+ speech); flat = jaws up/down
   along release <side>   open, then recall ready
   along turn <side> <deg> | along tilt <side> <deg>   wrist roll | wrist flex (+ tips down)
   along open [side]      that gripper opens, arm stays (no side: both)
   along park             arms holding nothing -> rest
-Debug page: `robot stream` -> http://localhost:8101/along (boxes, state, conversation, Codex pane, type-as-voice).
+Debug page: `robot stream` -> http://localhost:8101/along (state, conversation, Codex pane, type-as-voice).
 Key: OPENAI_API_KEY in the environment or in .env (repo). Optional ALONG_MIC (pw source; default the C920 mic).
 """
 import json, os, re, signal, subprocess, sys, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
-SEEN, IDLE, MUTE = f"{HERE}/.along_seen.json", f"{HERE}/along_idle.json", f"{HERE}/.along_mute"
+SEEN, MUTE = f"{HERE}/.along_seen.json", f"{HERE}/.along_mute"
 HELD = f"{HERE}/.along_held.json"                        # {"left": "toothbrush"}: what each arm holds (set by the agent)
 EVENTS = f"{HERE}/.along_events.jsonl"                    # conversation + state history (debug page /along)
 W, H = 800, 450                                         # scene tile (px)
-ROI, CHANGE = (150, 60, 650, 430), 0.02                    # centre of the table (scene px) where new things wake Along
-BG = f"{HERE}/along_idle_bg.npy"
 
 
 def env(k, d=None):
@@ -397,105 +390,11 @@ def tell(text, fresh=False, wait=False):
     return codex_agent.run(text, fresh, on_event=event, on_reply=lambda m: say(m[:400]), wait=wait)
 
 
-# ---------------------------------------------------------------- vision
-def iou(a, b):
-    x1, y1, x2, y2 = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
-    i = max(0, x2 - x1) * max(0, y2 - y1)
-    return i / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i + 1e-9)
-
-
-class Eyes:
-    def __init__(self, conf=0.2):
-        from ultralytics import YOLOWorld
-        from so101 import Robot
-        self.m, self.bot, self.conf = YOLOWorld(f"{HERE}/along_world.pt"), Robot(), conf
-
-    def arm_px(self):
-        """The arms' links (FK at the measured pose) projected into the 800x450 scene image: the detector likes to call
-        a moved arm 'scissors' or 'knife', so boxes on an arm don't count as new objects."""
-        import numpy as np, collide
-        c = json.load(open(f"{HERE}/scene.json"))["scene_camera"]
-        f, up = np.array(c["forward"]), np.array(c["up"]); r = np.cross(f, up); fp = c["focal_px"]
-        m, su, pts = self.bot.state()["measured"], collide.setup(), []
-        for side in ("left", "right"):
-            F = collide.frames(np.array([m[f"{side}_{j}"] for j in collide.J]))[0]
-            o = [F[i, :3, 3] for i in range(1, F.shape[0])]
-            o = o + [(a + b) / 2 for a, b in zip(o, o[1:])] + [(F[-1] @ [0, 0, -0.1, 1])[:3]]   # + midpoints, jaw tips
-            B = collide.base_T(side, su)
-            for q in o:
-                d = (B @ np.r_[q, 1])[:3] - np.array(c["position"])
-                pts.append((W / 2 + fp * d @ r / (d @ f), H / 2 - fp * d @ up / (d @ f)))
-        return pts
-
-    def change(self, img, arm):
-        """Fraction of the centre ROI that differs from the idle background (class-agnostic: the detector misses a
-        toothbrush in a hand). Arm links are masked; the background follows slow light changes while nothing changed."""
-        import cv2, numpy as np
-        g = cv2.GaussianBlur(cv2.cvtColor(cv2.resize(img, (W // 4, H // 4)), cv2.COLOR_BGR2GRAY), (5, 5), 0).astype(np.float32)
-        if getattr(self, "bg", None) is None:
-            self.bg = np.load(BG) if os.path.exists(BG) and not hasattr(self, "bg") else g.copy()
-        d = g - self.bg; d = np.abs(d - np.median(d))          # minus the global shift (auto exposure)
-        m = np.zeros_like(g, np.uint8); x0, y0, x1, y1 = (v // 4 for v in ROI); m[y0:y1, x0:x1] = 1
-        for u, v in arm:
-            cv2.circle(m, (int(u) // 4, int(v) // 4), 14, 0, -1)
-        ch = (d > 28) & (m > 0); frac = float(ch.sum()) / max(1, int(m.sum()))
-        if frac < CHANGE / 3:
-            self.bg += 0.05 * (g - self.bg)
-        ys, xs = np.nonzero(ch)
-        self.blob = [int(xs.mean() * 4), int(ys.mean() * 4)] if len(xs) else None
-        return frac
-
-    def detect(self):
-        img = self.bot.thumb("scene", W, H)
-        r = self.m.predict(img, verbose=False, conf=self.conf)[0]
-        try:
-            arm = self.arm_px()
-        except Exception:
-            arm = []
-        self.frac = round(self.change(img, arm), 3)
-        out = []
-        for c, s, x in zip(r.boxes.cls, r.boxes.conf, r.boxes.xyxy):
-            x = [int(v) for v in x]
-            out.append({"label": r.names[int(c)], "conf": round(float(s), 2), "box": x,
-                        "px": [(x[0] + x[2]) // 2, (x[1] + x[3]) // 2],
-                        "arm": any(x[0] - 15 <= u <= x[2] + 15 and x[1] - 15 <= v <= x[3] + 15 for u, v in arm)})
-        self.arm = [[round(u), round(v)] for u, v in arm]
-        return out
-
-
-def in_roi(px):
-    return ROI[0] <= px[0] <= ROI[2] and ROI[1] <= px[1] <= ROI[3]
-
-
-def novel(dets, base):
-    """Detections that count for waking: centre of the table only, any class (names are unreliable), not on an arm,
-    not where the idle baseline already had a box."""
-    return [d for d in dets if d["conf"] >= 0.15 and in_roi(d["px"]) and not d.get("arm")
-            and not any(iou(b["box"], d["box"]) > 0.3 for b in base)]
-
-
 def rd_held():
     try:
         return json.load(open(HELD))
     except (FileNotFoundError, ValueError):
         return {}
-
-
-def engaged(bot):
-    """Arms tied up with an object of interest (the detector often misses an object in the jaws):
-    'holding' = HOLDING or jaws shut with the arm raised (thin things close fully), 'offering' = jaws open, arm raised."""
-    try:
-        tg, why = bot.state()["target"], []
-        for side in ("left", "right"):
-            a = getattr(bot, side); up = a.tip()[2] > 0.12; g = tg[f"{side}_gripper"]
-            what = rd_held().get(side)
-            if what or a.holding() or (up and g <= 10):
-                why.append(f"{side} holding {what or 'something'}")
-            elif up and g >= 25:
-                why.append(f"{side} offering")
-        return why
-    except Exception as e:
-        return [f"robot state unknown ({e})"]
 
 
 ON = f"{HERE}/.along_on"                                    # manual switch: exists = Along is on (mic open)
@@ -856,7 +755,7 @@ def do_step(r, text, done, rest, last):
 
 
 def run_manual():
-    """Manual on/off (`along on` / `along off`, or the page buttons) instead of the scene detector."""
+    """The daemon: switched on/off by hand (`along on` / `along off`, or the page buttons)."""
     on, last_voice = False, 0.0
 
     def heard(text, answered=False):
@@ -886,62 +785,9 @@ def run_manual():
             interrupt_codex()                                         # off = interrupt Codex + no voice; arms stay put
         json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
                    "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
-                   "voice": "GPT-Live", "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice,
+                   "voice": "GPT-Live", "held": rd_held(), "last_voice": last_voice,
                    "busy": BUSY.is_set() or codex_agent.busy(), "state_t": STATE["t"], "state": STATE["text"]}, open(SEEN, "w"))
         time.sleep(0.2)
-
-
-def run():
-    eyes = Eyes()
-    if not os.path.exists(IDLE):
-        sys.exit("no idle baseline: clear the table to its idle state and run `along idle` first")
-    base = json.load(open(IDLE))
-    active, hits, last_new, last_voice, woke, GRACE = False, [], 0.0, 0.0, 0.0, 8.0
-
-    def heard(text):
-        nonlocal last_voice
-        last_voice = time.time(); tell(f"[voice] {text}")
-    mic = LiveVoice(heard)
-    log("idle; watching the scene")
-    while True:
-        t = time.time()
-        try:
-            dets = eyes.detect()
-        except Exception as e:
-            log("vision error", e); event("error", f"vision: {e}"); time.sleep(2); continue
-        new = novel(dets, base)
-        if not new and eyes.frac > CHANGE and eyes.blob:
-            new = [{"label": "change", "conf": eyes.frac, "px": eyes.blob, "box": [eyes.blob[0] - 20, eyes.blob[1] - 20, eyes.blob[0] + 20, eyes.blob[1] + 20]}]
-        hits = (hits + [bool(new)])[-4:]
-        force = os.path.exists(f"{HERE}/.along_force")
-        if force:
-            os.remove(f"{HERE}/.along_force"); new = new or [{"label": "something", "px": [400, 225]}]
-        if sum(hits) >= 3 or force or (active and new):    # object of interest in the scene (3 of 4 frames to start)
-            last_new = t
-        arms = engaged(eyes.bot)
-        if active and not arms and new and new[0]["label"] == "change" and t - max(last_voice, woke) > 60:
-            eyes.bg = None; log("change left alone 60 s: it is part of the scene now")   # re-learn the background
-        why = ([f"new object {t - last_new:.0f}s ago"] if t - last_new < GRACE else []) + arms
-        if not active and why:
-            active, woke = True, t
-            names = (", ".join(f"scene px ({d['px'][0]},{d['px'][1]})" for d in new)
-                     and "something new at " + ", ".join(f"scene px ({d['px'][0]},{d['px'][1]})" for d in new)) or ", ".join(arms)
-            log("WAKE:", names, [d.get("label") for d in new]); event("wake", names)
-            say("Hi, I'm Al. Need a hand?")
-            chime(880); mic.on.set()
-            tell(f"[along] Woke up: {names} (the cheap detector only says where; look at the image yourself to see what it is). "
-                 "I already greeted them and asked if they need a hand; the mic is on "
-                 "while an object of interest is in the scene or in the jaws. Wait for their [voice] request.")
-        elif active and not why:
-            active = False
-            mic.on.clear()                                 # nothing of interest: no voice commands go through
-            log("back to idle"); event("idle")
-            tell("[along] Back to idle: no new object in the scene and nothing in the jaws; the mic is off. "
-                 "Park the arms (robot step \"recall rest\"), silently.")
-        json.dump({"t": t, "active": active, "why": why, "listening": mic.on.is_set(), "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy,
-                   "reply_open": spoke_left(), "speaking": muted(), "all": dets,
-                   "new": new, "arm_px": getattr(eyes, "arm", []), "held": rd_held(), "hits": hits, "change": eyes.frac, "roi": ROI, "last_new": last_new, "last_voice": last_voice}, open(SEEN, "w"))
-        time.sleep(max(0.0, 0.5 - (time.time() - t)))
 
 
 def look(question, cams=("scene", "left", "right")):
@@ -1128,7 +974,7 @@ def main():
     a = sys.argv[1:] or ["help"]
     llm.SPEND = True                                      # the along process itself: real calls are intended
     if a[0] == "run":
-        run() if "--yolo" in a else run_manual()
+        run_manual()
     elif a[0] == "attach":                                # watch / type into the Codex session
         th = codex_agent.state()["thread"]
         if not th:
@@ -1152,8 +998,6 @@ def main():
         print(look(" ".join(a[1:])))
     elif a[0] == "say":
         say(" ".join(a[1:]))
-    elif a[0] == "wake":                                  # debug: force the daemon awake (see .along_force)
-        open(f"{HERE}/.along_force", "w").write("wake")
     elif a[0] == "tell":
         t = " ".join(a[1:])
         if t.startswith("[voice]"):
@@ -1169,18 +1013,6 @@ def main():
                 except Exception as e:
                     event("error", f"router: {e}"); sys.exit(f"router: {e}")
         tell(t, wait=True)
-    elif a[0] == "idle":
-        e = Eyes(conf=0.1); d = [x for _ in range(6) for x in e.detect()]   # union of a few frames: flicker-proof
-        import numpy as np; np.save(BG, e.bg)
-        json.dump(d, open(IDLE, "w"))
-        print("idle baseline:", [x["label"] for x in d])
-    elif a[0] == "see":
-        if not os.path.exists(SEEN):
-            sys.exit("along run is not running (no detections yet)")
-        s = json.load(open(SEEN))
-        print(f"{'active' if s['active'] else 'idle'}, {time.time() - s['t']:.1f}s old (scene px = 800x450 tile, for robot locate)")
-        for d in s["all"]:
-            print(f"  {'NEW ' if d in s['new'] else '    '}{d['label']:<16} {d['conf']:.2f}  px {d['px'][0]:>3} {d['px'][1]:>3}  box {d['box']}")
     else:
         print(__doc__)
 

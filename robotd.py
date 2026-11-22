@@ -113,7 +113,6 @@ class SimRobot:
     def get_observation(self): return dict(self.q)
     def arm_torque(self, side, on): pass
     def reconfigure(self): pass
-    def send_side(self, side, a): self.send_action(a)
     def send_action(self, a):
         for k, v in a.items(): self.q[k] += (v - self.q[k]) * 0.2
 

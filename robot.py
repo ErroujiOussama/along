@@ -124,7 +124,7 @@ def _caps(qd):
 
 def along_api(h, u):
     """Debug page for the along voice helper: /along, /along.json (state, detections, history, Codex state + turn log),
-    /along/scene.jpg (scene camera with the detector's boxes), /along/do?cmd=tell|say|wake|idle&text=...,
+    /along/scene.jpg (scene camera), /along/do?cmd=tell|say|on|off&text=...,
     /along/calls.json?n=60[&sig=] (llm.calls + episode states from the events;
     {"same": true} when sig is unchanged), /along/calls/<id>_<n>.jpg (images sent with those calls)"""
     import subprocess
@@ -152,8 +152,7 @@ def along_api(h, u):
                     arms[side] = {"gripper_target": st["target"][f"{side}_gripper"], "holding": a.holding(), "tip": a.tip()}
         except Exception as e:
             arms = {"error": str(e)}
-        return send(json.dumps({"now": time.time(), "daemon": daemon, "seen": rd(".along_seen.json"),
-                                "idle": rd("along_idle.json", []), "events": ev, "arms": arms,
+        return send(json.dumps({"now": time.time(), "daemon": daemon, "seen": rd(".along_seen.json"), "events": ev, "arms": arms,
                                 "codex": cx, "codex_log": "".join(log)}).encode(), "application/json")
     if u.path == "/along/scene.jpg":
         import cv2
@@ -162,22 +161,6 @@ def along_api(h, u):
                 img = r.thumb("scene", 800, 450).copy()
         except Exception as e:
             img = tile(str(e), 800, 450)
-        seen = rd(".along_seen.json", {}) or {}
-        if seen.get("roi"):                                                  # wake zone: new things here wake Along
-            x0, y0, x1, y1 = seen["roi"]; ch = seen.get("change", 0)
-            cv2.rectangle(img, (x0, y0), (x1, y1), (60, 220, 60) if ch > 0.02 else (230, 200, 60), 1)
-            cv2.putText(img, f"wake zone  change {ch * 100:.1f}% (>2% wakes)", (x0 + 4, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (230, 200, 60), 1)
-        for b in ([] if seen.get("manual") else rd("along_idle.json", [])):
-            cv2.rectangle(img, tuple(b["box"][:2]), tuple(b["box"][2:]), (120, 120, 120), 1)
-        for u_, v_ in seen.get("arm_px", []):
-            cv2.circle(img, (int(u_), int(v_)), 3, (200, 60, 200), -1)     # arm links (FK): boxes there are ignored
-        new = [d["box"] for d in seen.get("new", [])]
-        for d in seen.get("all", []):
-            c = (60, 220, 60) if d["box"] in new else (200, 60, 200) if d.get("arm") else (60, 170, 230)   # BGR: green new, magenta on an arm, orange known
-            cv2.rectangle(img, tuple(d["box"][:2]), tuple(d["box"][2:]), c, 2)
-            txt = f"{d['label']} {d['conf']:.2f}"
-            cv2.putText(img, txt, (d["box"][0], max(14, d["box"][1] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
-            cv2.putText(img, txt, (d["box"][0], max(14, d["box"][1] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1)
         return send(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes(), "image/jpeg")
     if u.path == "/along/calls.json":                                      # model calls (llm.py log) + episode states
         q = dict(parse_qsl(u.query))
@@ -224,7 +207,7 @@ def along_api(h, u):
         h.send_header("Content-Length", str(len(body))); h.end_headers(); h.wfile.write(body); return
     if u.path == "/along/do":
         q = dict(parse_qsl(u.query)); cmd = q.get("cmd", "")
-        if cmd not in ("tell", "say", "wake", "idle", "on", "off", "open", "reset", "fresh"):
+        if cmd not in ("tell", "say", "on", "off", "open", "reset", "fresh"):
             return send(b'{"error": "cmd?"}', "application/json")
         args = [f"{here}/.venv/bin/python", f"{here}/along.py", cmd] + ([q["text"]] if q.get("text") else [])
         subprocess.Popen(args, cwd=here, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

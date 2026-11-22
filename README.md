@@ -54,11 +54,11 @@ No hardware: `SO101_SIM=1` on robotd and clients, then `SO101_SIM=1 .venv/bin/py
 | | |
 |---|---|
 | `along.py` · `along.html` · `codex_agent.py` · `llm.py` | voice helper, router, skills · its debug page · Al's Codex turns · model calls |
-| `robotd.py` · `so101.py` · `robot.py` · `tui.py` | daemon · Python API · CLI · keyboard panel |
+| `robotd.py` · `so101.py` · `robot.py` | daemon · Python API · CLI |
 | `kin.py` · `so101.urdf` · `collide.py` · `planner.py` | FK/IK · URDF (TheRobotStudio/SO-ARM100) · table/arm collision · paths |
 | `calib.py` · `scene.json` · `calibration/` · `poses.json` · `cams.json` | scene-camera calibration · table + camera pose · servo calibration · saved poses · camera settings |
 | `screenrec.py` · `v4l.py` · `stream.html` · `inspect.html` | screen recording (desktop portal) · V4L2 controls · web pages |
-| `AGENTS.md` · `prompts/` · `notes/` | rules for coding agents on the arms · Al's brief + task prompts · parked ideas |
+| `AGENTS.md` · `prompts/along.md` | rules for coding agents on the arms (Al reads them too) · Al's brief |
 
 ## Hardware
 
