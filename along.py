@@ -130,6 +130,7 @@ class LiveVoice:
     def __init__(self, on_text):
         self.on, self.on_text, self.phase, self.prob, self.stt_busy = threading.Event(), on_text, "off", 0.0, False
         self.ws, self.deleg, self.heard, self.speak_until = None, None, "", 0.0
+        self.cpend, self.cseen = None, set()
         self.utt, self.utt_t, self.pend = "", 0.0, 0.0     # current utterance (page log); pending hand-off time
         self.orphan, self.said_t, self.routed_t = 0.0, 0.0, 0.0                 # addressed utterance GPT-Live did not hand off; Al last spoke
         threading.Thread(target=self.loop, daemon=True).start()
@@ -221,6 +222,7 @@ class LiveVoice:
                         log("live: bad say line", ex); continue
                     try:
                         self.send(type="session.commentary.append", delegation_id=self.deleg, content=text)
+                        self.cpend, self.cseen = [text, time.time(), 0], set()   # watched: spoken within 3 s?
                     except Exception:
                         return
                 pos += len(lines)
@@ -232,6 +234,21 @@ class LiveVoice:
                 if reset_t() > t_start:                   # Reset Al: reconnect with an empty context
                     event("sys", "voice context cleared (Reset Al)"); break
                 e = json.loads(raw); k = e.get("type")
+                if self.cpend and k != "session.output_audio.delta":
+                    self.cseen.add(k)
+                if k == "session.output_transcript.delta":
+                    self.cpend = None
+                elif self.cpend and time.time() - self.cpend[1] > 3:   # GPT-Live sometimes drops a commentary: log, resend once
+                    text, _, tries = self.cpend
+                    log("live: commentary not spoken", repr(text), "events since:", sorted(self.cseen))
+                    if tries:
+                        self.cpend = None; event("error", f"GPT-Live did not speak: {text}")
+                    else:
+                        self.cpend, self.cseen = [text, time.time(), 1], set()
+                        try:
+                            self.send(type="session.commentary.append", delegation_id=self.deleg, content=text)
+                        except Exception:
+                            pass
                 if isinstance(e.get("usage"), dict) or isinstance((e.get("response") or {}).get("usage"), dict):
                     with open(f"{HERE}/.along_calls.jsonl", "a") as f_:   # GPT-Live's own cost: in the call log too
                         f_.write(json.dumps({"id": f"live{time.time():.0f}", "t": time.time(), "kind": "live", "model": "gpt-live",
