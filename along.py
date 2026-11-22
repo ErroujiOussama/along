@@ -97,8 +97,10 @@ LIVE_ON, LIVE_OUT = f"{HERE}/.along_live", f"{HERE}/.along_live_out.jsonl"
 LIVE_PROMPT = """You are Al, the cute, cheerful helper inside Along: the voice of two robot arms (left = white, right = orange) in a busy lab. You can't see
 or move anything yourself: every request to do, look at, hold, turn, press, release or check something goes to your
 hands (delegate it at once and say only "On it." or "Sure." while it runs: never claim it is done or happening before
-your hands report it). Your hands' reports arrive as commentary: say each one right away, nearly word for word
-(e.g. "Ready, put it between my jaws." is an instruction for the person and must be said).
+your hands report it). Questions about the arms, the scene or what just happened ("did you press it?", "why?", "what
+are you doing?") go to your hands too: you know nothing about them, so never answer or explain those yourself, just
+"Let me check." Your hands' reports arrive as commentary: say each one right away, nearly word for word. Never invent
+reasons, plans or results.
 Talk only when someone talks to you (they say "Al" or answer you). The room is full of other conversations (also in
 German or other languages, people on calls): ignore them completely, never delegate them, stay silent.
 Be quick and casual, one short sentence. Never talk about safety, fingers or injuries, never ask "are you sure":
@@ -153,6 +155,28 @@ class LiveVoice:
         mic = subprocess.Popen(["pw-record", *fmt, *(["--target", src] if src else []), "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         spk = subprocess.Popen(["pw-play", *fmt, "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         stop = threading.Event()
+        import queue
+        spk_q = queue.Queue()
+
+        def pump_spk():                                   # jitter buffer: deltas arrive at ~real-time pace with network
+            bps, pre = self.RATE * 2, self.RATE * 2 * 0.15  # jitter; writing them straight through starves pw-play (stutter).
+            buf, end, first = bytearray(), 0.0, 0.0       # When the pipe has drained, re-prime with 150 ms before writing.
+            while not stop.is_set():
+                try:
+                    b = spk_q.get(timeout=0.02)
+                except queue.Empty:
+                    b = b""
+                if b:
+                    if not buf:
+                        first = time.time()
+                    buf += b
+                now = time.time()
+                if buf and (end > now or len(buf) >= pre or now - first > 0.3):
+                    try:
+                        spk.stdin.write(buf); spk.stdin.flush()
+                    except (BrokenPipeError, ValueError):
+                        return
+                    end = max(end, now) + len(buf) / bps; buf.clear()
 
         def pump_mic():                                   # 40 ms chunks; silence while we talk (no echo of ourselves)
             while not stop.is_set():
@@ -188,8 +212,9 @@ class LiveVoice:
                     started = True; self.phase = "listening"; log("live session", e["session"]["id"]); event("sys", "voice session up (GPT-Live)")
                     threading.Thread(target=pump_mic, daemon=True).start()
                     threading.Thread(target=pump_out, daemon=True).start()
+                    threading.Thread(target=pump_spk, daemon=True).start()
                 elif k == "session.output_audio.delta":
-                    b = base64.b64decode(e["delta"]); spk.stdin.write(b); spk.stdin.flush()
+                    b = base64.b64decode(e["delta"]); spk_q.put(b)
                     import numpy as np                    # the stream never stops (silence too): mute only on real speech
                     if len(b) >= 2 and float(np.sqrt(np.mean(np.frombuffer(b, np.int16).astype(np.float32) ** 2))) > 300:
                         self.speak_until = max(self.speak_until, time.time() + 0.6); self.phase = "muted"
@@ -429,6 +454,11 @@ Actions:
   codex_fresh = true when the task has nothing to do with what Codex did recently (it then starts from a clean session,
   faster and not confused by old context); false to continue its context ("now do the same with the other arm").
 - none: not addressed to Al (chatter, other conversations, other languages not meant for Al): actions = [none], say = "".
+  Also none for a fragment or reaction that asks for nothing ("What", "The grippers", "Oh", "left" after Al already acted
+  on it) while a plan or Codex is running: a new action interrupts the running one, so only act on a clear new request.
+Al's lines in the recent conversation come from the voice model, which cannot see the arms and sometimes makes things up
+("Pressed." before anything moved, "put it between my jaws" for a press): trust the arm state, images and activity, and
+correct it in say when it told the person something wrong.
 
 episode = how the request relates to the open episode (the goal being worked on, given in the context): "new" (a new
 goal, or none is open), "continue" (same goal: retry, a correction, "now the other arm"), "confirm" (the person says it
@@ -559,9 +589,7 @@ def robot_errs(out):
 def act(plan, text, answered=False):
     """Run the router's plan in its own thread (latest request wins: a newer plan interrupts this one); keeps the episode.
     answered = GPT-Live already replied itself (it never handed off): no extra talk."""
-    steps = [st for st in plan["actions"] if st["action"] != "none" and not (answered and st["action"] == "answer")]
-    if answered and any(st["action"] == "answer" for st in plan["actions"]):
-        event("sys", "GPT-Live already answered this itself: not saying it twice")
+    steps = [st for st in plan["actions"] if st["action"] != "none"]   # GPT-Live only says "Let me check." itself
     ep, real = plan.get("episode", "new"), any(st["action"] != "answer" for st in steps)
     if ep == "confirm" and EP["id"] and EP["status"] not in ("confirmed", "dropped"):
         confirm_episode()
