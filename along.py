@@ -4,6 +4,7 @@ Voice = GPT-Live (speech-to-speech; it hands robot/vision work to Codex) only wh
 the idle baseline, 3 of 4 frames to start, kept 8 s after it was last seen) or an arm holding/offering. What you say goes to
 one long-running Codex session (tmux "along", persona prompts/along.md) which acts with `robot`; its final message is spoken.
 
+  along attach           open the Codex session (tmux "along" on the default server)
   along run              the daemon (mic + Codex bridge), switched by hand: along on / along off (or /along buttons)
   along run --yolo       instead wake on the scene camera (new thing in the centre of the table)
   along idle             store what the scene shows now as the idle baseline (empty table + fixtures)
@@ -87,7 +88,7 @@ def muted():
 
 
 def spoke_left(window=20.0):
-    """Seconds left in which a reply counts without saying "Along" (0 = closed)."""
+    """Seconds left in which a reply counts without saying "Al" (0 = closed)."""
     try:
         return max(0.0, round(window - (time.time() - float(open(f"{HERE}/.along_spoke").read())), 1))
     except (FileNotFoundError, ValueError):
@@ -97,12 +98,12 @@ def spoke_left(window=20.0):
 
 # ---------------------------------------------------------------- GPT-Live voice (speech-to-speech; Codex does the work)
 LIVE_ON, LIVE_OUT = f"{HERE}/.along_live", f"{HERE}/.along_live_out.jsonl"
-LIVE_PROMPT = """You are Along, the voice of two robot arms (left = white, right = orange) in a busy lab. You can't see
+LIVE_PROMPT = """You are Al, the cute, cheerful helper inside Along: the voice of two robot arms (left = white, right = orange) in a busy lab. You can't see
 or move anything yourself: every request to do, look at, hold, turn, press, release or check something goes to your
 hands (delegate it at once and say only "On it." or "Sure." while it runs: never claim it is done or happening before
 your hands report it). Your hands' reports arrive as commentary: say each one right away, nearly word for word
 (e.g. "Ready, put it between my jaws." is an instruction for the person and must be said).
-Talk only when someone talks to you (they say "Along" or answer you); ignore other chatter in the room.
+Talk only when someone talks to you (they say "Al" or answer you); ignore other chatter in the room.
 Be quick and casual, one short sentence. Never talk about safety, fingers or injuries, never ask "are you sure":
 the people here know what they are doing. Just do it."""
 
@@ -149,7 +150,7 @@ class LiveVoice:
                   "audio": {"format": {"type": "audio/pcm", "rate": self.RATE}, "output": {"voice": env("ALONG_LIVE_VOICE", "marin")}},
                   "delegation": {"type": "client"},
                   "input": [{"type": "message", "role": "developer", "content": [{"type": "input_text",
-                             "text": "Greet them now in a few words: you are Along and can lend a hand."}]}]})
+                             "text": "Greet them now in a few words: you are Al and can lend a hand."}]}]})
         open(LIVE_ON, "w").write(str(os.getpid())); open(LIVE_OUT, "w").close()
         fmt = ["--raw", "--rate", str(self.RATE), "--channels", "1", "--format", "s16"]
         src = mic_source()
@@ -224,7 +225,7 @@ class LiveVoice:
 
 # ---------------------------------------------------------------- codex bridge
 def tmux(*a, **k):
-    return subprocess.run(["tmux", *a], capture_output=True, text=True, **k)
+    return subprocess.run(["tmux", "-L", "default", *a], capture_output=True, text=True, **k)   # the default server, wherever along runs from
 
 
 TELL = threading.Lock()
@@ -245,6 +246,22 @@ def codex_up():
             break
         last = scr
     log("Codex ready")
+
+
+def interrupt_codex():
+    """Stop the running turn, its background shells and any skill in flight (an open-jawed hold stays where it is)."""
+    tmux("send-keys", "-t", TMUX, "Escape"); time.sleep(0.3)
+    tmux("send-keys", "-t", TMUX, "-l", "/stop"); time.sleep(0.2); tmux("send-keys", "-t", TMUX, "Enter")
+    subprocess.run(["pkill", "-f", r"^\S*python\S* \S*(along\.py (hold|release|turn|tilt|press|look)|robot\.py (offer|step))"], capture_output=True)
+    BUSY.clear()
+
+
+def tell_lock_up():
+    if TELL.acquire(blocking=False):
+        try:
+            codex_up()
+        finally:
+            TELL.release()
 
 
 def tell(text):
@@ -388,7 +405,7 @@ def watch(mic):
 
 
 def relay_replies():
-    """Codex's final message of each turn is what Along says (GPT-Live voices it): no `along say` tool call needed."""
+    """Codex's final message of each turn is what Al says (GPT-Live voices it): no `along say` tool call needed."""
     import glob
     done, first, mt = set(), True, {}
     while True:
@@ -414,7 +431,7 @@ def relay_replies():
 
 def run_manual():
     """Manual on/off (`along on` / `along off`, or the page buttons) instead of the scene detector."""
-    on, last_voice = False, 0.0
+    on, last_voice, last_check = False, 0.0, time.time()
 
     def heard(text):
         nonlocal last_voice
@@ -437,7 +454,11 @@ def run_manual():
             chime(880); mic.on.set()
         elif on and not want:
             on = False; mic.on.clear(); log("OFF"); event("idle", "switched off")
-            threading.Thread(target=skill, args=(["park"],), daemon=True).start()   # no Codex turn needed
+            interrupt_codex()                                         # off = interrupt Codex + no voice; arms stay put
+        if t - last_check > 10:                                       # the one Codex session: bring it back if it died
+            last_check = t
+            if not env("ALONG_DRY") and tmux("has-session", "-t", TMUX).returncode != 0:
+                threading.Thread(target=tell_lock_up, daemon=True).start()
         json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
                    "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
                    "voice": "GPT-Live", "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice}, open(SEEN, "w"))
@@ -482,7 +503,7 @@ def run():
             names = (", ".join(f"scene px ({d['px'][0]},{d['px'][1]})" for d in new)
                      and "something new at " + ", ".join(f"scene px ({d['px'][0]},{d['px'][1]})" for d in new)) or ", ".join(arms)
             log("WAKE:", names, [d.get("label") for d in new]); event("wake", names)
-            say("Hi, I'm Along. Need a hand?")
+            say("Hi, I'm Al. Need a hand?")
             chime(880); mic.on.set()
             tell(f"[along] Woke up: {names} (the cheap detector only says where; look at the image yourself to see what it is). "
                  "I already greeted them and asked if they need a hand; the mic is on "
@@ -625,6 +646,12 @@ def skill(a):
         print(rstep(f"goto {side} {x} {y} {z - depth:.3f}"))      # aims below the surface: the servos push
         time.sleep(0.8)
         print(rstep(f"goto {side} {x} {y} {z + 0.05:.3f}"))
+    elif cmd == "open":                             # along open: both grippers open, nothing held (dashboard button)
+        print(rstep("set left_gripper 45; set right_gripper 45")); json.dump({}, open(HELD, "w")); event("held", "{}")
+    elif cmd == "reset":                            # along reset: stop everything, open, both arms back to rest (dashboard)
+        interrupt_codex()
+        print(rstep("set left_gripper 45; set right_gripper 45")); json.dump({}, open(HELD, "w")); event("held", "{}")
+        print(rstep("recall ready left; recall ready right")); print(rstep("recall rest left; recall rest right"))
     elif cmd == "park":                             # along park: arms that hold nothing go to rest
         h = rd_held()
         print(rstep("; ".join(f"recall rest {sd}" for sd in ("left", "right") if sd not in h) or ""))
@@ -634,6 +661,8 @@ def main():
     a = sys.argv[1:] or ["help"]
     if a[0] == "run":
         run() if "--yolo" in a else run_manual()
+    elif a[0] == "attach":                                # watch / type into the Codex session
+        os.environ.pop("TMUX", None); os.execvp("tmux", ["tmux", "-L", "default", "attach", "-t", TMUX])
     elif a[0] == "on":
         open(ON, "w").write("on")
     elif a[0] == "off":
@@ -646,7 +675,7 @@ def main():
         else:
             h[side] = what
         json.dump(h, open(HELD, "w")); event("held", json.dumps(h)); print(h)
-    elif a[0] in ("hold", "release", "turn", "tilt", "press", "park"):
+    elif a[0] in ("hold", "release", "turn", "tilt", "press", "park", "open", "reset"):
         skill(a)
     elif a[0] == "look":
         print(look(" ".join(a[1:])))

@@ -135,7 +135,7 @@ def along_api(h, u):
         ev = []
         if os.path.exists(f"{here}/.along_events.jsonl"):
             ev = [json.loads(l) for l in open(f"{here}/.along_events.jsonl").readlines()[-300:] if l.strip()]
-        pane = subprocess.run(["tmux", "capture-pane", "-p", "-t", "along", "-S", "-60"], capture_output=True, text=True)
+        pane = subprocess.run(["tmux", "-L", "default", "capture-pane", "-p", "-t", "along", "-S", "-60"], capture_output=True, text=True)
         daemon = subprocess.run(["pgrep", "-f", "along.py run"], capture_output=True).returncode == 0
         arms = {}
         try:
@@ -175,7 +175,7 @@ def along_api(h, u):
         return send(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes(), "image/jpeg")
     if u.path == "/along/do":
         q = dict(parse_qsl(u.query)); cmd = q.get("cmd", "")
-        if cmd not in ("tell", "say", "wake", "idle", "on", "off"):
+        if cmd not in ("tell", "say", "wake", "idle", "on", "off", "open", "reset"):
             return send(b'{"error": "cmd?"}', "application/json")
         args = [f"{here}/.venv/bin/python", f"{here}/along.py", cmd] + ([q["text"]] if q.get("text") else [])
         subprocess.Popen(args, cwd=here, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

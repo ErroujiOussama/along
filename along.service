@@ -1,0 +1,17 @@
+# systemd user service for the Along daemon (GPT-Live voice + the one Codex session in tmux "along", default server).
+# Install: ln -sf $PWD/along.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+# Stopping it leaves Codex running (reused on the next start); `along attach` to watch it.
+[Unit]
+Description=Along voice helper daemon
+After=robotd.service
+
+[Service]
+WorkingDirectory=%h/Projects/active/so101
+ExecStart=%h/Projects/active/so101/.venv/bin/python along.py run
+Environment=PYTHONUNBUFFERED=1
+UnsetEnvironment=TMUX TMUX_PANE
+StandardOutput=append:%h/Projects/active/so101/along.log
+StandardError=append:%h/Projects/active/so101/along.log
+Restart=on-failure
+RestartSec=3
+KillMode=process

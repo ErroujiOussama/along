@@ -40,18 +40,20 @@ robot raw "move right_elbow_flex -5; wait; snap"   # raw protocol; ';' chains, w
 systemctl --user stop robotd     # park at rest, release torque
 ```
 
-## Along (voice helper)
+## Along (voice helper, agent "Al")
 
 ```bash
-along run       # daemon: GPT-Live voice (speech-to-speech, C920 mic) while switched on; it hands robot/vision
-                # requests to Codex (tmux `along`, brief prompts/along.md) and speaks Codex's final reply
-along on · along off   # (or the buttons on /along); off parks the free arms
-along hold|release|turn|tilt|press|park ...   # one-call skills Codex uses (see along.py --help)
-along run --yolo       # instead: wake on a new thing in the centre of the table (`along idle` first, table empty)
-along look "where is the toothbrush?" · along see · along tell "[voice] hold this"   # vision · detections · type into the Codex session
+systemctl --user start along   # daemon (along.service; link it like robotd.service): GPT-Live voice (C920 mic) while
+                               # switched on; it hands robot/vision requests to Al = one reused Codex session
+                               # (tmux `along` on the default server, brief prompts/along.md) and speaks Al's final reply
+along attach           # watch / type into Al's Codex session
+along on · along off   # (or the /along buttons); off = voice off + interrupt Al, arms stay put
+along open · along reset   # release both grips · stop everything, open, both arms to rest (also /along buttons)
+along hold|release|turn|tilt|press|park ...   # one-call skills Al uses (see along.py --help)
+along look "where is the toothbrush?" · along tell "[voice] hold this"   # vision · type into Al's session
 ```
-Key: `OPENAI_API_KEY` in `.env`. Watch the agent: `tmux attach -t along`; debug page `robot stream` → `/along`
-(detector boxes, state, conversation, Codex pane, type-as-voice, force wake).
+Key: `OPENAI_API_KEY` in `.env`. Debug page: `robot stream` → `/along` (state, conversation, Codex pane, type-as-voice).
+`along run --yolo` = old mode, wakes on a new thing in the centre of the table (`along idle` first).
 
 ```python
 from so101 import Robot

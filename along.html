@@ -35,7 +35,7 @@ label{font-size:12px;color:var(--dim)}
 #vad i{display:block;height:100%;background:#fff}
 </style></head><body>
 <header><b>along</b><span id="chips"></span><span style="flex:1"></span><a href="/">cameras</a><a href="/inspect">inspector</a></header>
-<div style="display:flex;background:#1a1a1a;gap:8px;padding:8px 10px"><button id="on" style="font-size:18px;padding:6px 22px;background:#1f6f34;color:#fff">Along ON</button><button id="off" style="font-size:18px;padding:6px 22px">Along OFF</button></div>
+<div style="display:flex;background:#1a1a1a;gap:8px;padding:8px 10px"><button id="on" style="font-size:18px;padding:6px 22px;background:#1f6f34;color:#fff">Along ON</button><button id="off" style="font-size:18px;padding:6px 22px">Along OFF</button><span style="flex:1"></span><button id="open" style="font-size:16px;padding:6px 16px">Release grips</button><button id="reset" style="font-size:16px;padding:6px 16px;background:#8b1d1d;color:#fff">Reset arms</button></div>
 <div id="banner" class="idle">…</div>
 <main>
  <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
@@ -69,7 +69,7 @@ async function poll() {
     const age = s ? d.now - s.t : null;
     $('chips').innerHTML = chip(d.daemon ? 'daemon running' : 'daemon stopped', d.daemon ? 'on' : 'bad')
       + (s ? chip(s.active ? 'ACTIVE' : 'idle', s.active ? 'on' : '') + chip(s.listening ? 'mic on' : 'mic off', s.listening ? 'on' : '')
-           + chip(s.speaking ? 'Along talking (mic muted)' : 'silent', s.speaking ? 'warn' : '')
+           + chip(s.speaking ? 'Al talking (mic muted)' : 'silent', s.speaking ? 'warn' : '')
            + chip('new-object hits ' + (s.hits || []).filter(Boolean).length + '/4 (3 wakes)', '') : '')
       + chip(d.codex === null ? 'no Codex session' : 'Codex up', d.codex === null ? '' : 'on');
     const b = $('banner'), why = (s?.why || []).join(', ');
@@ -77,10 +77,10 @@ async function poll() {
     if (!d.daemon || !s || age > 5) { cls = 'down'; big = 'NOT RUNNING'; small = d.daemon ? `daemon state ${age?.toFixed(0)} s old` : 'along run is not running: nothing is watched or heard'; }
     else if (!s.active && s.manual) { cls = 'idle'; big = `OFF · mic OFF${s.voice ? ' · ' + s.voice : ''}`; small = 'not listening. Press "Along ON" to switch it on'; }
     else if (!s.active) { cls = 'idle'; big = 'IDLE · mic OFF'; small = `not listening. Wakes on something new in the wake zone (change ${((s.change||0)*100).toFixed(1)}%, needs >2% in 3 of 4 frames; hits ${(s.hits||[]).filter(Boolean).length}/4)`; }
-    else if (s.mic === 'muted') { cls = 'muted'; big = 'ACTIVE · Along is talking (mic muted)'; small = 'because: ' + why; }
+    else if (s.mic === 'muted') { cls = 'muted'; big = 'ACTIVE · Al is talking (mic muted)'; small = 'because: ' + why; }
     else if (s.stt) { cls = 'stt'; big = 'ACTIVE · transcribing…'; small = 'because: ' + why; }
     else if (s.mic === 'speech') { cls = 'speech'; big = 'ACTIVE · hearing speech'; small = 'because: ' + why; }
-    else { cls = 'listening'; big = 'ON · LISTENING' + (s.voice ? ' · ' + s.voice : ''); small = (s.reply_open > 0 ? `reply window open ${s.reply_open.toFixed(0)} s: just talk` : 'start with "Along, …"') + ' · because: ' + why; }
+    else { cls = 'listening'; big = 'ON · LISTENING' + (s.voice ? ' · ' + s.voice : ''); small = (s.reply_open > 0 ? `reply window open ${s.reply_open.toFixed(0)} s: just talk` : 'start with "Al, …"') + ' · because: ' + why; }
     b.className = cls; b.innerHTML = `<span>${big}</span><span id="vad" title="voice probability"><i style="width:${Math.round((s?.vad||0)*100)}%"></i></span><small>${esc(small)}</small>`;
     const man = !!s?.manual;
     $('legend').style.display = $('yolo').style.display = man ? 'none' : '';
@@ -109,6 +109,8 @@ const doit = (cmd, text) => fetch('/along/do?' + new URLSearchParams({cmd, ...(t
 $('f').onsubmit = e => { e.preventDefault(); const t = $('txt').value.trim(), c = e.submitter?.dataset.cmd || 'voice';
   if (!t) return; doit(c === 'voice' ? 'tell' : 'say', c === 'voice' ? '[voice] ' + t : t); $('txt').value = ''; };
 $('on').onclick = () => doit('on'); $('off').onclick = () => doit('off');
+$('open').onclick = () => doit('open');
+$('reset').onclick = () => confirm('Stop Al, open both grippers and move both arms to rest?') && doit('reset');
 $('wake').onclick = () => doit('wake');
 $('idle').onclick = () => confirm('Store what the scene shows now as the idle baseline?') && doit('idle');
 </script></body></html>
