@@ -165,6 +165,12 @@ class LiveVoice:
         open(LIVE_ON, "w").write(str(os.getpid())); open(LIVE_OUT, "w").close()
         fmt = ["--raw", "--rate", str(self.RATE), "--channels", "1", "--format", "s16"]
         src = mic_source()
+        for _ in range(20):                       # the C920 can drop off USB for a few seconds: wait for its mic, not the laptop's
+            if src:
+                break
+            time.sleep(0.5); src = mic_source()
+        if not src:
+            event("error", "C920 mic not found: using the default microphone")
         mic = subprocess.Popen(["pw-record", *fmt, *(["--target", src] if src else []), "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         spk = subprocess.Popen(["pw-play", *fmt, "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         stop = threading.Event()
