@@ -650,11 +650,6 @@ def do_step(r, text, done, rest, last):
     if args is None:
         RUN.update(p=None, what="step"); out = ""
         for c in cmds:                                    # one robot step each: a ';' chain sums into one target
-            g = c.split()
-            if g[0] == "goto" and len(g) == 5:            # coarse router guesses: the nearest point the arm really reaches
-                x, y, z = map(float, g[2:5]); rx, ry, rz = reachable(g[1], x, y, z)
-                if abs(rx - x) + abs(ry - y) + abs(rz - z) > 0.005:
-                    c = f"goto {g[1]} {rx:.3f} {ry:.3f} {rz:.3f}"; event("skill", f"{' '.join(g)} is past the arm's reach: {c}")
             o_ = rstep(c); out += o_ + "\n"
             if robot_errs(o_):
                 break
