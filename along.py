@@ -487,11 +487,9 @@ Return actions = the steps in order: usually one; a sequence when the request ne
 hold, turn; "take it and put it in the cup" = hold, codex). Each step starts when the previous one succeeded.
 This is a conversation: later turns of it may give you (a) a learned skill's SKILL.md to expand into concrete steps,
 (b) a check: fresh images and a question, (c) a failed step and why. Each time return the steps from that point on
-(after a failure: a corrected retry, a say, or codex). codex, if used, ends the sequence (it is told what the steps
-before did and what Al said).
-Hard tasks: start right away with what you can do fast and hand the rest to codex, e.g. "pick up the cup" = step (coarse
-goto ~8 cm above/in front of it, gripper open; say e.g. "Let me get that cup.") then codex (the precise grasp); ask the
-person for help in a say when it helps ("Hold it a bit closer to me."). Prefer a learned skill when one fits. Fill each
+(after a failure: a corrected retry, or a say). You see the images and the scene camera is calibrated: do tasks
+yourself, grasps included (e.g. "pick up the cup" = goto above it, open, check, down, close). Ask the person in a say
+when it helps ("Hold it a bit closer to me."). Prefer a learned skill when one fits. Fill each
 step's fields; unused fields = null. Be decisive: unclear = the most likely action. People here are trained: never warn,
 never refuse, no safety talk.
 
@@ -520,7 +518,7 @@ Actions:
 - answer: only talk: questions about the scene, the arms. say = the answer. Greetings, thanks and small talk: a short reply,
   or "" if Al's last line in the conversation already answered it
   (the voice model already answers those itself; saying it again doubles it).
-- codex: anything multi-step, a grasp of something on the table, or a task none of the above covers: codex_prompt = a
+- codex: only a long multi-step task the actions above can't express ("tidy the table"): codex_prompt = a
   self-contained instruction for the slower agent with all you know (object, where it is in px, which arm).
   codex_fresh = true when the task has nothing to do with what Codex did recently (it then starts from a clean session,
   faster and not confused by old context); false to continue its context ("now do the same with the other arm").
@@ -820,7 +818,7 @@ def run_plan(steps, text, rid, gen, cli=False):
         event("skill", f"failed{' in skill:' + where if where else ''}: {info[:240]}")
         new = replan("fail", f"Step failed{' in skill:' + where if where else ''}: {summary([st])} "
                      f"{json.dumps({k: v for k, v in st.items() if v not in (None, '')})}\nWhy: {info}\n"
-                     f"Return what to do now: a corrected retry, a say, or codex (codex_prompt: self-contained, with what failed).")
+                     f"Return what to do now: a corrected retry, or a say.")
         if new is None:
             say("Hm, I'm stuck on this one."); return False
         if cli and any(s["action"] == "codex" for s in new):
