@@ -126,6 +126,7 @@ def run(task, fresh_ctx=False, on_event=lambda kind, text: None, on_reply=lambda
     if state().get("provider") != prov:                  # a thread lives with its provider: switching starts fresh
         _save(thread=None, provider=prov)
     thread = state()["thread"]
+    import llm; llm.spend("codex")
     cmd = ["codex", "exec", *(["resume"] if thread else []), *flags(), *([thread] if thread else []), "-"]
     p = subprocess.Popen(cmd, cwd=HERE, env={**os.environ, **({"OPENAI_API_KEY": API_KEY} if API_KEY else {})}, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(ERR, "w"),
                          text=True, start_new_session=True)       # own process group: interrupt kills it whole
@@ -228,6 +229,7 @@ def fork(task, on_event=lambda kind, text: None, on_done=lambda reply: None, thr
         return None
     if refining():
         _log("[refine] skipped: the previous refinement still runs"); return None
+    import llm; llm.spend("codex fork")
     cmd = ["codex", "exec", "fork", *flags(), thread, "-"]
     p = subprocess.Popen(cmd, cwd=HERE, env={**os.environ, **({"OPENAI_API_KEY": API_KEY} if API_KEY else {})},
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(ERR + ".refine", "w"),

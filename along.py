@@ -150,6 +150,7 @@ class LiveVoice:
     def session(self):
         import base64
         from websockets.sync.client import connect
+        llm.spend("GPT-Live session")
         ws = self.ws = connect("wss://api.openai.com/v1/live/sessions", open_timeout=15, max_size=None,
                                additional_headers={"Authorization": f"Bearer {env('OPENAI_API_KEY')}"})
         self.send(type="session.start", session={"model": env("ALONG_LIVE_MODEL", "gpt-live-1.1"), "instructions": LIVE_PROMPT,
@@ -1222,4 +1223,5 @@ def main():
 
 
 if __name__ == "__main__":
+    llm.SPEND = True                                      # the along process itself: real calls are intended
     main()

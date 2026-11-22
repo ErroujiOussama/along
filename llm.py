@@ -17,6 +17,15 @@ _last_instr = {}                                         # instructions text -> 
 
 
 API_KEY = None                                           # set by along (from its env file)
+# Money gate: every paid call (Responses here, Codex in codex_agent, GPT-Live in along) checks spend(). Only the along
+# process itself (`along ...` / the daemon) turns it on; importing along in a test or script spends nothing unless
+# ALONG_SPEND=1 is set on purpose (dry runs against the real model).
+SPEND = os.environ.get("ALONG_SPEND") == "1"
+
+
+def spend(what):
+    if not SPEND:
+        raise RuntimeError(f"paid call blocked ({what}): not the along process; set ALONG_SPEND=1 to allow it")
 
 
 def call(kind, content, instructions=None, schema=None, prev=None, episode=None, model=None, tier=None, effort="low",
@@ -24,6 +33,7 @@ def call(kind, content, instructions=None, schema=None, prev=None, episode=None,
     """content: list of str (text) or ("label", data_url) tuples (images, label shown before them).
     Returns (output, response_id): output = parsed JSON with a schema, else the text."""
     import requests
+    spend(f"responses {kind}")
     model = model or os.environ.get("ALONG_ROUTE_MODEL", "gpt-6.1-sol")
     tier = tier or os.environ.get("ALONG_LOOK_TIER", "ultrafast")
     cid = f"c{time.time():.3f}".replace(".", "_")
