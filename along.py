@@ -495,7 +495,7 @@ Actions:
   (if visible; else null and the arm goes to a default spot).
 - release: side opens and goes back to ready (drops what it holds).
 - turn: wrist roll of side by deg (+/-; 90 = quarter turn). tilt: wrist flex by deg (+ tips down).
-- press: side's closed jaws go 5 cm above a point, push depth_cm past it and hold (default 6, harder 8-10)
+- press: side's closed jaws go 5 cm above a point, push down on it with full force
   and come back up. object = that point (u, v, height_cm, dist_cm); side = the arm that reaches it. Unsure of the
   position: step goto above it first, check, then press.
 - open: side's gripper opens (lets go), the arm stays. park: empty arms go to rest. reset: everything stops, both arms
@@ -528,12 +528,12 @@ Scale: the scene camera is 33 cm above the table and 70 cm from each arm base (b
 faces the arms: the orange/right arm is on image-left. Wrist images look out between each arm's jaws."""
 
 STEP_SCHEMA = {"type": "object", "additionalProperties": False,
-    "required": ["action", "side", "what", "deg", "depth_cm", "step", "object", "say", "codex_prompt", "codex_fresh"],
+    "required": ["action", "side", "what", "deg", "step", "object", "say", "codex_prompt", "codex_fresh"],
     "properties": {
         "action": {"type": "string", "enum": ["hold", "release", "turn", "tilt", "press", "check", "open", "park", "reset", "stop",
                                               "step", "answer", "ask", "codex", "none"]},
         "side": {"type": ["string", "null"], "enum": ["left", "right", "auto", None]},
-        "what": {"type": ["string", "null"]}, "deg": {"type": ["number", "null"]}, "depth_cm": {"type": ["number", "null"]},
+        "what": {"type": ["string", "null"]}, "deg": {"type": ["number", "null"]},
         "step": {"type": ["string", "null"]},
         "object": {"anyOf": [{"type": "null"}, {"type": "object", "additionalProperties": False,
             "required": ["u", "v", "dist_cm", "height_cm", "pose", "axis_deg"],
@@ -726,10 +726,10 @@ def do_step(r, text, done, rest, last):
     elif a == "press":                                    # in-thread robot steps: above, down past the top, back up
         if not o or side not in ("left", "right"):
             return "press needs side = left or right and object = the point (scene pixel, height, distance)"
-        x, y, z = pixel_xyz(side, o["u"], o["v"], o["height_cm"])   # the top's height places it (the old, working press)
-        d = (r.get("depth_cm") or 6) / 100                # aims below the top: the servos push into it while it holds
+        x, y, z = pixel_xyz(side, o["u"], o["v"], o["height_cm"])   # the top's height places it; aims at the table:
+        # the largest position error = the servos' full force on the top, held 1.5 s
         cmds = [f"set {side}_gripper 0", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}",
-                f"goto {side} {x:.3f} {y:.3f} {max(z - d, 0.0):.3f}", "wait 1.2", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}"]
+                f"goto {side} {x:.3f} {y:.3f} 0.0", "wait 1.5", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}"]
         args = None
     elif a == "open":
         args = [a] + ([side] if side in ("left", "right") else [])
