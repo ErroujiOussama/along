@@ -218,7 +218,10 @@ class Robot:
                     r = self.call(c)
                     if c.split()[0] == "goto":   # runs in the background (the next command would cancel it): finish it
                         self.wait(); p = c.split()
-                        off = sum((a - float(b)) ** 2 for a, b in zip(getattr(self, p[1]).tip(), p[2:5])) ** 0.5
+                        off_ = lambda: sum((a - float(b)) ** 2 for a, b in zip(getattr(self, p[1]).tip(), p[2:5])) ** 0.5
+                        off, t_end = off_(), time.time() + 1.0
+                        while off > 0.01 and time.time() < t_end:   # a fast move can still swing past: let it settle
+                            time.sleep(0.1); off = off_()
                         looks.append(self._look(p[1], " ".join(p[:5])))
                         if off > 0.01:
                             raise ValueError(f"tip ended {off * 100:.1f} cm from the goal")

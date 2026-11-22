@@ -694,6 +694,7 @@ def do_step(r, text, done, rest, last):
     """One plan step, blocking. True = go on with the next step, False = stop (stopped / asked the person), a string =
     it failed (why, for the model to decide what now). done: what earlier steps did (for Codex)."""
     a, side, say_done = r["action"], r.get("side") or "auto", (r.get("say") or "").strip()
+    phase = {}                                            # press: command -> what that part does (for a failure report)
     speak = say_done or ("Done." if last else "")
 
     def say(t):                                           # what the person was told goes to Codex too
@@ -734,8 +735,10 @@ def do_step(r, text, done, rest, last):
         if ((t[0] - x) ** 2 + (t[1] - y) ** 2) ** 0.5 < 0.04 and z < t[2] < z + 0.12:   # above it, checked: push from here
             cmds = [f"set {side}_gripper 0", f"push goto {side} {t[0]:.3f} {t[1]:.3f} 0.0", "wait 1.5",
                     f"goto {side} {t[0]:.3f} {t[1]:.3f} {t[2]:.3f}"]
+            phase = {cmds[3]: "going back up after the push (the push itself ran)"}
         else:                                             # first go above it; a check (fresh images) corrects, then this press
             cmds = [f"set {side}_gripper 0", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}"]
+            phase = {cmds[1]: "going 5 cm above the point (nothing pressed yet)"}
             rest[:0] = [{"action": "check", "side": side, "what": f"{side} closed jaws right above the middle of "
                          f"{r.get('what') or 'the point'} (not its front edge), to press straight down (correct with a nudge or goto if not)"}, r]
             speak = ""                                    # nothing to say yet: the press itself follows
@@ -757,6 +760,9 @@ def do_step(r, text, done, rest, last):
     else:
         return True
     what = "along " + " ".join(args) if args else "robot step " + "; ".join(cmds)
+    if a == "press":                                      # its internal commands mean nothing to the model
+        what = f"press {side} {r.get('what') or ''}".strip()
+    failed_at = None
     if args is None:
         RUN.update(p=None, what="step"); out = ""
         for c in cmds:                                    # one robot step each: a ';' chain sums into one target
@@ -773,7 +779,7 @@ def do_step(r, text, done, rest, last):
                 continue
             o_ = rstep(c); out += o_ + "\n"
             if robot_errs(o_):
-                break
+                failed_at = c; break
         ok, killed = bool(out.strip()), False
     else:
         p = subprocess.Popen([sys.executable, __file__, *args], cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -783,7 +789,9 @@ def do_step(r, text, done, rest, last):
     errs = robot_errs(out)
     if errs:                                              # refused by robotd: never "Done."
         event("skill", "refused: " + "; ".join(errs)[:240])
-        return f"`{what}` was refused by the robot: {'; '.join(errs)[:300]}"
+        why = "; ".join(re.sub(r"tip ended ([\d.]+) cm from the goal", r"ended \1 cm off its goal", e) for e in errs)
+        how = "" if all("tip ended" in e for e in errs) else " was refused by the robot"   # off = moved, a bit imprecise
+        return f"`{what}`{how}{' while ' + phase[failed_at] if failed_at in phase else ''}: {why[:300]}"
     event("skill", ("done: " if ok else "failed: ") + " ".join(out.split())[-240:])
     if a == "hold":
         if re.search(r"""['"]holding['"]: (True|true)""", out):
