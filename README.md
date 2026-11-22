@@ -1,116 +1,67 @@
-# so101
+# .along. — a set of helping hands
 
-Two SO-101 follower arms and three cameras on one laptop, behind a single daemon.
+Two SO-101 arms you talk to. Say what you need ("hold this toothbrush", "turn it so I can put toothpaste on",
+"press the soap") and Al does it, using three cameras and two grippers. Built at the Robotics & AI Hackathon, Berlin, 22 Nov 2026.
+
+[![Demo: soap, toothbrush, toothpaste (2 min)](docs/along-demo.jpg)](docs/along-demo.mp4)
+
+▶ [docs/along-demo.mp4](docs/along-demo.mp4): press a soap dispenser, hold a toothbrush and toothpaste, turn the brush, hand it back.
+
+## How it works
 
 ```
-arms + cameras ← robotd.py (only bus owner, one shared state) ← so101.py (Python API) ← robot CLI · tui.py panel · agents
+voice (GPT-Live) → router (gpt-6.1-sol, one call) → skill: hold · release · turn · tilt · press · open · park
+                         └→ anything else: Al = a headless Codex turn driving `robot`
+skills / Codex → so101.py (Python API) / robot CLI → robotd.py (only bus + camera owner, 50 Hz) → arms + cameras
 ```
+
+- **robotd** owns the servos and cameras. Commands only change the target, so a new command overrides the running one. It ramps to targets, clamps to calibrated ranges, and survives replugging and power cuts.
+- **Aiming**: the scene camera (C920) gives a pixel, `robot locate` turns it into xyz for each arm, and `kin.py` computes the IK.
+- **Hand-over**: the arm reaches out with its jaws open, then a frame-difference check and a vision check confirm the object is between the jaws before it closes.
 
 ## Setup
 
 ```bash
-./install.sh                     # uv sync, `robot` command, systemd user unit, LeRobot calibration links
-systemctl --user start robotd    # never autostarts; logs: journalctl --user -u robotd -f
-robot save rest                  # once, with the arms folded at rest: home/stop/shutdown park here
+./install.sh                     # uv sync, `robot` command, systemd user units, calibration links
+systemctl --user start robotd    # logs: journalctl --user -u robotd -f
+robot save rest                  # once, arms folded at rest
+echo OPENAI_API_KEY=... > .env   # for along (GPT-Live + router)
+systemctl --user start along
 ```
 
 ## Use
 
 ```bash
-robot                            # state: target vs measured per joint, torque, loop Hz
-robot step "move right_elbow_flex -5; set right_gripper 20"   # run, wait until settled, snap_all.jpg + ~4 state lines
-robot step                       # just look: wrist cams on top (400x225), scene below (800x450) + joints, HOLDING, tip xyz + moved
-robot recall ready right         # from rest: gripper pointing down, tip 10 cm above the table (min 5.7 cm on the way)
-robot nudge right 2 0 -1         # tip dx dy dz cm, ≤ 3 cm; discouraged (re-estimate + goto instead)
-robot locate 400 300 0.05        # scene pixel (800x450) -> xyz where its ray meets z = 0.05 m, both arm frames
-robot ik right 0.3 0.05 0.06     # dry run: joint targets for a tip xyz, moves nothing
-robot move left elbow -5         # relative (deg; gripper %); `set` = absolute
-robot open right · robot close right · robot goto left 0.2 0 0.08 · robot tip left
-robot torque off left            # limp for hand-guiding — HOLD THE ARM; `torque on left` holds the new pose
-robot save NAME · robot recall NAME [side] · robot stop · robot home
-robot snap [left|right|scene]    # full-res newest frames → snap_<cam>.jpg (only when detail is needed)
-robot cams                       # which cameras deliver (unplugged = grey tile in step/view/stream)
-robot cam scene [k=v ...|reset]  # V4L2 controls (exposure, gain, focus, …), saved in cams.json, re-applied on replug
-robot view [cam ...]             # live video window, all cameras side by side (through robotd)
-robot stream [port]              # same as a web page (MJPEG, :8101); /inspect = rollout inspector (steps, images, 3D replay, live)
-                                 # page has a "camera settings" panel (same as robot cam; open directly with /#settings)
-                                 # share: `tailcat serve exec -- socat - TCP:127.0.0.1:8101`, viewers `tailcat browse <addr>`
-robot raw "move right_elbow_flex -5; wait; snap"   # raw protocol; ';' chains, wait = until settled
-.venv/bin/python tui.py          # keyboard panel + live camera (v); shared as quack session so101-tui
-systemctl --user stop robotd     # park at rest, release torque
+along on · along off             # voice on/off (also buttons on /along); while on, records cams + screen + audio
+                                 # to ~/Videos/al-demo/<time>/ (ALONG_RECORD=0 = off)
+along hold left toothbrush · along release left · along turn left 90 · along tilt right -20 · along park
+along look "where is the toothbrush?" · along tell "hold this" · along attach   # vision · type to Al · Al's Codex TUI
+robot step "goto right 0.28 0.03 0.06"   # move, wait, snap_all.jpg + state; `robot step` alone = look
+robot recall ready right · robot locate 400 300 0.05 · robot ik right 0.3 0.05 0.06 · robot torque off left
+robot stream                     # web view on :8101: cameras, /inspect (rollouts, 3D replay), /along (conversation, state)
+robot help · along --help        # everything else
 ```
-
-## Along (voice helper, agent "Al")
-
-```bash
-systemctl --user start along   # daemon (along.service; link it like robotd.service): GPT-Live voice (C920 mic) while
-                               # switched on; each request goes to a fast router (gpt-6.1-sol: runs a skill itself) or
-                               # to Al = a headless `codex exec` turn (codex_agent.py, brief prompts/along.md, state
-                               # .along_codex.json, log .along_codex.log); Al's final reply is spoken
-along attach           # open Al's Codex conversation in the Codex TUI
-along on · along off   # (or the /along buttons); off = voice off + interrupt Al, arms stay put
-                       # while on, records to ~/Videos/al-demo/<time>/: scene/left/right.mkv (robotd `rec`), screen.mkv
-                       # (screenrec.py, desktop portal: pick the screen once), mic.wav, speaker.wav; ALONG_RECORD=0 = off
-along open · along reset · along fresh   # release both grips · stop everything, both arms to rest · Codex back to only its brief (also /along buttons)
-along hold|release|turn|tilt|open|park ...   # one-call skills Al uses (see along.py --help)
-along look "where is the toothbrush?" · along tell "[voice] hold this"   # vision · type into Al's session
-```
-Key: `OPENAI_API_KEY` in `.env` (GPT-Live, router). Model calls: `.along_calls.jsonl` (the /along timeline). Codex (only when asked to take it slow) runs on the ChatGPT login (`codex login`; `ALONG_CODEX_API=1` = the key). Debug page: `robot stream` → `/along` (state, conversation, Codex turns, type-as-voice).
-`along run --yolo` = old mode, wakes on a new thing in the centre of the table (`along idle` first).
 
 ```python
 from so101 import Robot
-bot = Robot()
-bot.left.move(elbow=-5); bot.right.goto(0.2, 0, 0.08); bot.left.torque(False); img = bot.frame()
-bot.step("move right_elbow_flex -5"); bot.snap_all(); bot.right.holding(); bot.cams()
-bot.locate(400, 300); bot.right.ik(0.3, 0.05, 0.06)
+bot = Robot(); bot.step("move right_elbow_flex -5"); bot.right.goto(0.2, 0, 0.08); bot.locate(400, 300)
 ```
 
-`robot help` lists everything. Joints: pan lift elbow wrist roll gripper. Sides: left (white), right (orange).
+No hardware: `SO101_SIM=1` on robotd and clients, then `SO101_SIM=1 .venv/bin/python test_sim.py`.
 
 ## Files
 
 | | |
 |---|---|
-| `robotd.py`, `robotd.service` | daemon + systemd user unit |
-| `so101.py` · `robot.py` · `tui.py` | Python API · CLI · panel |
-| `kin.py`, `so101.urdf` | FK/IK (URDF from TheRobotStudio/SO-ARM100, meshes stripped) |
-| `calibration/` | servo calibration, the only copy (`tools/calibrate.sh` rewrites it) |
-| `scene.json` · `calib.py` | table, right base, scene camera · `robot calibrate` re-measures the camera (after it was bumped / `locate` misses) |
-| `poses.json` · `cams.json` | saved poses (`rest`, `ready`) · camera settings (scene: 50 Hz anti-flicker) |
-| `v4l.py` | V4L2 controls without v4l2-ctl |
-| `test_sim.py` | end-to-end checks against the sim |
-| `tools/` | `scan.py` (which servo IDs answer), `calibrate.sh` — stop robotd first |
-| `AGENTS.md` · `prompts/` · `notes/` | rules for coding agents driving the arms · reusable task prompts (`pick.md`) · parked ideas (`premotor.md`) |
-
-## How robotd works
-
-- 50 Hz loop; commands only change the target (reply < 1 ms, no queueing), so a new command preempts the old one.
-- Targets ramp at 45°/s, are clamped to the calibrated range, and may lead the measurement by ≤ 15°.
-  A small integral term (≤ 6°) cancels gravity sag.
-- Torque off: the arm's targets follow your hand, and motion commands for it are rejected.
-- Power cut: robotd sends nothing; when the bus returns it re-applies servo settings and holds the current pose.
-- USB replug: it reopens the arm ports by their by-id paths every 2 s until the arms answer, then holds the current pose.
-  Cameras: a camera with no frame for 2 s reports unplugged (snap skips it, view/stream show a grey tile) and reopens by by-id path when it is back.
-- Crash: systemd restarts it, holding the pose it finds.
-- Knobs: `SO101_P` (servo P, 16), `SO101_VEL`, `SO101_LEAD`, `SO101_KI`.
-- No hardware: `SO101_SIM=1` on robotd and on any client (own socket and poses); then `SO101_SIM=1 .venv/bin/python test_sim.py`.
+| `along.py` · `along.html` · `codex_agent.py` · `llm.py` | voice helper, router, skills · its debug page · Al's Codex turns · model calls |
+| `robotd.py` · `so101.py` · `robot.py` · `tui.py` | daemon · Python API · CLI · keyboard panel |
+| `kin.py` · `so101.urdf` · `collide.py` · `planner.py` | FK/IK · URDF (TheRobotStudio/SO-ARM100) · table/arm collision · paths |
+| `calib.py` · `scene.json` · `calibration/` · `poses.json` · `cams.json` | scene-camera calibration · table + camera pose · servo calibration · saved poses · camera settings |
+| `screenrec.py` · `v4l.py` · `stream.html` · `inspect.html` | screen recording (desktop portal) · V4L2 controls · web pages |
+| `AGENTS.md` · `prompts/` · `notes/` | rules for coding agents on the arms · Al's brief + task prompts · parked ideas |
 
 ## Hardware
 
-- LEFT = white `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B8E113306-if00`; RIGHT = orange `…5B61036524-if00`. STS3215 ×6 each, 1 Mbaud.
-- Cameras (`/dev/v4l/by-id/…`): left wrist icSpring, right wrist Sonix USB2.0_CAM1 (1280x720), scene Logitech C920 (1920x1080).
-  Plug the cameras into the laptop, not the hub (hub → USB 1.1, 160x120 purple frames).
-- Units: degrees, 0 = mid-range; gripper 0–100, 0 = closed.
-- Rest ≈ pan 0, lift -102, elbow 96, wrist_flex 60–67, gripper 3–5 (lift and elbow on their hard stops).
-
-## Kinematics
-
-`fk(q5)` → tip xyz (m, arm base frame: x forward, y left, z up); `ik(q0, xyz)` gripper pointing down, ~3 mm accurate in x 0.18–0.32, |y| ≤ 0.08, z ≥ 0.02.
-Signs: see the joint table in AGENTS.md (right-arm pan still unconfirmed).
-
-## Lessons
-
-- Leaving rest: raise shoulder_lift ≥ 10° first, then elbow, then wrist; blind moves drag the gripper on the table.
-- `goto` from rest fails (first IK step jumps ~37°): jog to a pointing-down pose, `save ready_<side>`, `goto` from there.
-- Never use LeRobot `max_relative_target`: it clips goals to present ±N°, so loaded joints (elbow) never get enough torque.
+- Left = white, right = orange; STS3215 ×6 each at 1 Mbaud, by-id serial paths in `robotd.py`. Units: degrees (0 = mid-range), gripper 0–100 % (0 = closed).
+- Cameras: two wrist cams + Logitech C920 scene cam (also the mic). Plug the cameras into the laptop directly: through a hub they drop to USB 1.1.
+- Leaving rest: raise shoulder_lift first, then elbow, then wrist. Never use LeRobot `max_relative_target`.

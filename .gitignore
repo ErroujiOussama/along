@@ -18,3 +18,5 @@ along_idle_bg.npy
 .along_held.json
 snap_calibrate.json
 snap_calibrate/
+scene.html
+sim.err
