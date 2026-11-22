@@ -626,6 +626,9 @@ def episode_ctx():
     if (EP["id"] and EP["status"] not in ("confirmed", "dropped") and not BUSY.is_set() and not codex_agent.busy()
             and time.time() - EP.get("touched", 0) > EP_STALE):    # nobody touched it for 10 min: a new request starts fresh
         episode("dropped"); event("sys", f"episode \"{EP['request'][:80]}\" closed: untouched for {EP_STALE // 60} min")
+    if LEARN.get("names") and time.time() - LEARN["t"] < LEARN_WAIT:
+        return (f"Al just asked whether to remember a new way of doing it (\"{LEARN['summary']}\"): yes / keep it = "
+                f"episode confirm, no / don't = episode deny.")
     if not EP["id"] or EP["status"] in ("confirmed", "dropped"):
         return "Open episode: none."
     return (f"Open episode: \"{EP['request'][:200]}\" ({EP['status']}{', Al asked whether it worked' if EP['status'] == 'asked' else ''}"
@@ -662,8 +665,35 @@ def turn(kind, msg, rid):
 
 
 def robot_errs(out):
-    """`robot step` reports refused commands (unreachable, outside the safe box, creeping) as ERR lines, exit code 0."""
-    return re.findall(r"^ERR\s+(.*)$", out or "", re.M)
+    """`robot step` reports refused commands (unreachable, outside the safe box, creeping) as ERR lines, exit code 0.
+    "too small" ones are left out: for the engine's own steps they mean the arm is already there."""
+    return [e for e in re.findall(r"^ERR\s+(.*)$", out or "", re.M) if "too small" not in e]
+
+
+def err_kind(e):
+    """robotd error -> blocked (something stopped the arm) | reach | system (hardware) | other (a bad command)."""
+    if "tip ended" in e:
+        return "blocked"
+    if "outside safe box" in e:
+        return "reach"
+    if "torque is OFF" in e or "camera" in e:
+        return "system"
+    return "other"
+
+
+def err_why(what, errs):
+    """What the model is told about robotd errors: the truth per kind, not a generic "refused"."""
+    out = []
+    for e in errs:
+        k = err_kind(e)
+        if k == "blocked":
+            cm = re.search(r"tip ended ([\d.]+) cm", e)
+            out.append(f"the arm was BLOCKED {cm.group(1) if cm else 'some'} cm short of the goal: it touched something "
+                       f"(the target, or something in front of it, e.g. a person's hand). Look at fresh images before moving "
+                       f"again; never repeat the same move or the same pixel at another height")
+        else:
+            out.append(f"robotd refused it: {e}")
+    return f"`{what}`: " + "; ".join(out)
 
 
 def act(plan, text, answered=False):
@@ -671,6 +701,11 @@ def act(plan, text, answered=False):
     answered = GPT-Live already replied itself (it never handed off): no extra talk."""
     steps = [st for st in plan["actions"] if st["action"] != "none"]   # GPT-Live only says "Let me check." itself
     ep, real = plan.get("episode", "new"), any(st["action"] != "answer" for st in steps)
+    if LEARN.get("names") and ep in ("confirm", "deny"):  # the answer to "Should I remember that?"
+        learn_answer(ep == "confirm")
+        if not real:
+            return
+        ep = "new"
     if ep == "confirm" and EP["id"] and EP["status"] not in ("confirmed", "dropped"):
         confirm_episode()
     elif ep == "deny" and EP["id"]:
@@ -823,12 +858,53 @@ def confirm_episode():
                 body = open(f"{HERE}/skills/{n}/SKILL.md").read()
             except FileNotFoundError:
                 continue
-            lines = [l for l in body.splitlines() if l.strip()]
-            lessons = body.split("## Lessons", 1)[1].strip().splitlines() if "## Lessons" in body else []
-            if len(lines) > 25 or len([l for l in lessons if l.strip()]) > 5:
-                event("error", f"skill {n} is too long ({len(lines)} lines, {len(lessons)} lessons; limit 20 / 5): "
-                               f"check it, or undo with along skill-undo {n}")
+            if len([l for l in body.splitlines() if l.strip()]) > 15 or "## Lessons" in body:
+                event("error", f"skill {n} breaks the limits (> 15 lines or a Lessons section): check it, "
+                               f"or undo with along skill-undo {n}")
+        if ch:                                            # nothing is kept unless the person says yes
+            m = re.search(r"^(?:created|patched) [\w-]+:\s*(.+)$", reply or "", re.M)
+            summary = (m.group(1).strip() if m else f"how to {ch[0][0].replace('-', ' ')}")[:160]
+            LEARN.update(names=[n for n, _ in ch], summary=summary, t=time.time())
+            say(f"I'd remember this for next time: {summary}. Should I keep it?")
+            threading.Timer(LEARN_WAIT, learn_answer, (None,)).start()
     codex_agent.fork(task, on_event=event, on_done=finished)
+
+
+LEARN = {}                                                # a learned skill change waiting for the person's yes / no
+LEARN_WAIT = 120                                          # s: no answer by then = not kept
+
+
+def learn_answer(keep):
+    """keep: True = the person said yes; False = no; None = no answer in time (not kept either)."""
+    names = LEARN.pop("names", None)
+    if not names:
+        return
+    if keep:
+        event("refine", f"kept: {', '.join(names)}"); say("Okay, I'll remember that.")
+        return
+    import skills
+    for n in names:
+        event("refine", f"{'not confirmed' if keep is None else 'declined'}: {skills.undo(n)}")
+    if keep is False:
+        say("Okay, I won't.")
+
+
+def out_of_reach(side, x, y, z, detail, say, cli):
+    """A target > 4 cm past the arm's reach. The other arm reaches it -> the model is told to use it (exact command);
+    else Al asks for it to be brought closer and the plan ends: a lower height on the same pixel only slides the target
+    along the camera ray onto whatever is in front of it (a hand)."""
+    import collide, numpy as np
+    s_ = collide.setup(); other = "left" if side == "right" else "right"
+    w = collide.base_T(side, s_) @ np.r_[x, y, z, 1.0]
+    ox, oy, oz = (np.linalg.inv(collide.base_T(other, s_)) @ w)[:3]
+    event("skill", detail)                                # the other arm: robotd's box + its radius (orientation-free:
+    if 0.08 <= ox <= 0.38 and abs(oy) <= 0.2 and -0.02 <= oz <= 0.25 and (ox * ox + oy * oy) ** 0.5 <= 0.36:   # it turns first)
+        return False, (f"{detail}. The {other} arm reaches that point: redo it with the {other} arm "
+                       f"(goto {other} {ox:.3f} {oy:.3f} {oz:.3f}); not the same arm at another height.")
+    if cli:
+        return False, f"{detail}, and the other arm's too: ask the person to bring it closer."
+    say("That's out of my reach. Can you bring it closer?")
+    return False, None
 
 
 def do_step(r, text, done, last, cli=False):
@@ -872,6 +948,9 @@ def do_step(r, text, done, last, cli=False):
         h = (o.get("height_cm") or 0) / 100 - 0.02
         loc = Robot().locate(o["u"], o["v"], h)
         side = side if side in ("left", "right") else min(("left", "right"), key=lambda sd: loc[sd][0] ** 2 + loc[sd][1] ** 2)
+        x, y, z = loc[side]; rx, ry, rz = reachable(side, x, y, z + 0.04, drop=0.03)
+        if ((rx - x) ** 2 + (ry - y) ** 2) ** 0.5 > 0.04:
+            return out_of_reach(side, x, y, z, f"press at {x:.2f} {y:+.2f} {z:.2f} is past the {side} arm's reach", say, cli)
         args = ["press", side, *(f"{v:.3f}" for v in loc[side]), str(r.get("depth_cm") or 4)]
     elif a in ("open", "park", "reset"):
         args = [a]
@@ -898,10 +977,8 @@ def do_step(r, text, done, last, cli=False):
             if g[0] == "goto" and len(g) == 5:            # coarse guesses: the nearest point the arm really reaches
                 x, y, z = map(float, g[2:5]); rx, ry, rz = reachable(g[1], x, y, z, drop=0.02)   # pull back, barely lower
                 off = ((rx - x) ** 2 + (ry - y) ** 2 + (rz - z) ** 2) ** 0.5
-                if off > 0.04:                            # far out of reach: going "as close as possible" is a pointless move
-                    why = (f"{c} is {off * 100:.0f} cm past the {g[1]} arm's reach (it gets to {rx:.2f} {ry:+.2f} {rz:.2f} at "
-                           f"most). Don't move there: use the other arm if it is nearer, or ask the person to bring it closer.")
-                    event("skill", why); return False, why
+                if off > 0.04:                            # far out of reach: decided here, not by the model
+                    return out_of_reach(g[1], x, y, z, f"{c} is {off * 100:.0f} cm past the {g[1]} arm's reach", say, cli)
                 if off > 0.005:
                     c = f"goto {g[1]} {rx:.3f} {ry:.3f} {rz:.3f}"; event("skill", f"{' '.join(g)} is past the arm's reach: {c}")
             o_ = rstep(c)
@@ -921,8 +998,14 @@ def do_step(r, text, done, last, cli=False):
     if killed:                                            # stop / a newer request: say nothing, end the plan
         event("skill", f"stopped: {what}"); return False, None
     errs = robot_errs(out)
-    if errs:                                              # refused by robotd: never "Done."
-        return False, f"`{what}` refused by robotd: {'; '.join(errs)}"
+    if errs:                                              # never "Done."
+        if any(err_kind(e) == "system" for e in errs) and not cli:   # hardware: say it, no model retry
+            e = next(e for e in errs if err_kind(e) == "system")
+            event("skill", f"{what}: {e}"); say(f"I can't right now: {e.split(' (')[0]}."); return False, None
+        if any(err_kind(e) == "reach" for e in errs) and not cli:
+            say("That's out of my reach. Can you bring it closer?"); event("skill", f"{what}: outside the safe box")
+            return False, None
+        return False, err_why(what, errs)
     event("skill", ("done: " if ok else "failed: ") + " ".join(out.split())[-240:])
     if a == "hold":
         if re.search(r"""['"]holding['"]: (True|true)""", out):
@@ -1153,7 +1236,7 @@ def reachable(side, x, y, z, drop=0.06):
         for pz in [z - d / 100 for d in range(0, int(drop * 100) + 1)]:
             if px >= 0.08 and pz >= 0.0 and arm.ik(px, py, pz)["error_m"] < 0.015:
                 return px, py, pz
-    return x, y, z
+    return (float("inf"),) * 3                           # nowhere near: every distance check fails
 
 
 def skill(a):
@@ -1206,6 +1289,8 @@ def skill(a):
     elif cmd == "press":                            # along press <side> x y z [depth_cm]: push straight down on (x,y,z)
         x, y, z = map(float, a[2:5]); depth = float(a[5]) / 100 if len(a) > 5 else 0.04
         rx, ry, rz = reachable(side, x, y, z + 0.04, drop=0.03)       # approach >= 1 cm above the point
+        if rx == float("inf"):
+            sys.exit(f"press {side} FAILED: {x:.2f}/{y:+.2f}/{z:.2f} is out of the {side} arm's reach")
         far = abs(rx - x) + abs(ry - y) > 0.03                         # beyond the arm (often: held out too far)
         if far or rz < z + 0.04:
             event("skill", f"press: {x:.2f}/{y:+.2f}/{z:.2f} past the arm's reach, pressing at {rx:.2f}/{ry:+.2f} from {rz:.2f}")
@@ -1217,11 +1302,16 @@ def skill(a):
             sys.exit(f"press {side} FAILED: {'; '.join(robot_errs(o))}")
         if far:                                     # a moment at our limit: the person can bring it under the gripper
             time.sleep(2.0)
-        o = rstep(f"goto {side} {rx:.3f} {ry:.3f} {max(z - depth, 0.0):.3f}"); print(o)   # aims below the surface: the servos push
-        if robot_errs(o):
-            sys.exit(f"press {side} FAILED: {'; '.join(robot_errs(o))}")
+        o = rstep(f"goto {side} {rx:.3f} {ry:.3f} {max(z - depth, 0.0):.3f}")   # aims below the surface: the servos push
+        bad = [e for e in robot_errs(o) if err_kind(e) != "blocked"]           # stopping short = contact: the press itself
+        print(re.sub(r"^ERR .*tip ended.*$", "", o, flags=re.M))
+        tz = getattr(Robot(), side).tip()[2]
+        print(f"press: contact, the tip stopped at z {tz:.3f} (aimed {max(z - depth, 0.0):.3f})"
+              if len(robot_errs(o)) > len(bad) else f"press: reached z {tz:.3f} without resistance")
         time.sleep(0.8)
-        print(rstep(f"goto {side} {rx:.3f} {ry:.3f} {rz:.3f}"))
+        print(rstep(f"goto {side} {rx:.3f} {ry:.3f} {rz:.3f}"))             # always lift clear again
+        if bad:
+            sys.exit(f"press {side} FAILED: {'; '.join(bad)}")
     elif cmd == "open":                             # along open: both grippers open, nothing held (dashboard button)
         print(rstep("set left_gripper 45; set right_gripper 45")); json.dump({}, open(HELD, "w")); event("held", "{}")
     elif cmd == "reset":                            # along reset: stop everything, open, both arms back to rest (dashboard)

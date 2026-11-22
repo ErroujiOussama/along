@@ -57,7 +57,8 @@ along skill press-pump 'target: soap pump' · along skill-undo press-pump   # ru
 **Learned skills** (`skills/<name>/SKILL.md`, skills.py): the router sees one line per skill; picking one starts a new
 turn of the same conversation (llm.py, previous_response_id) with that SKILL.md, and so do `check` steps (fresh images)
 and failed steps. When Codex was needed and the person confirms it worked, a forked Codex thread (prompts/refine.md)
-patches or creates a skill. Every model call: `.along_calls.jsonl` (the /along "Model calls" panel).
+patches or creates a skill (goal, strategy, success; no lessons). Al says what it learned and keeps it only on a spoken
+yes (no answer in 2 min = undone). Out of reach / blocked / no torque are handled in code, never learned. Every model call: `.along_calls.jsonl` (the /along "Model calls" panel).
 Key: `OPENAI_API_KEY` in `.env`. Debug page: `robot stream` → `/along` (state, conversation, Codex turns, type-as-voice).
 `along run --yolo` = old mode, wakes on a new thing in the centre of the table (`along idle` first).
 
