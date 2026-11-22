@@ -528,8 +528,8 @@ STEP_SCHEMA = {"type": "object", "additionalProperties": False,
         "step": {"type": ["string", "null"]},
         "object": {"anyOf": [{"type": "null"}, {"type": "object", "additionalProperties": False,
             "required": ["u", "v", "dist_cm", "height_cm", "pose", "axis_deg"],
-            "properties": {"u": {"type": "number"}, "v": {"type": "number"}, "dist_cm": {"type": ["number", "null"]},
-                           "height_cm": {"type": ["number", "null"]}, "pose": {"type": "string", "enum": ["upright", "flat"]},
+            "properties": {"u": {"type": "number"}, "v": {"type": "number"}, "dist_cm": {"type": "number"},
+                           "height_cm": {"type": "number"}, "pose": {"type": "string", "enum": ["upright", "flat"]},
                            "axis_deg": {"type": ["number", "null"]}}}]},
         "say": {"type": "string"}, "codex_prompt": {"type": ["string", "null"]}, "codex_fresh": {"type": ["boolean", "null"]}}}
 
@@ -669,7 +669,7 @@ def do_step(r, text, done, rest, last):
         if not o:
             return "press needs object = the point to press (scene pixel + height)"
         from so101 import Robot
-        h = (o.get("height_cm") or 0) / 100 - 0.02
+        h = o["height_cm"] / 100 - 0.02
         loc = Robot().locate(o["u"], o["v"], h)
         side = side if side in ("left", "right") else min(("left", "right"), key=lambda sd: loc[sd][0] ** 2 + loc[sd][1] ** 2)
         args = ["press", side, *(f"{v:.3f}" for v in loc[side]), str(r.get("depth_cm") or 4)]
