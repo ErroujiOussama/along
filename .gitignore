@@ -18,3 +18,5 @@ along_idle_bg.npy
 .along_held.json
 skills/usage.json
 skills/usage.json.lock
+snap_calibrate.json
+snap_calibrate/

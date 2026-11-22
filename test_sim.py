@@ -67,7 +67,9 @@ r = bot.step(f"goto right {t[0]} {t[1]} {t[2] - 0.02}"); import cv2; check("goto
 tg, e = bot.offer_pose("left", 0.28, 0.05, 0.15, 90); import numpy as _n; from kin import K as _K
 _T = _K.forward_kinematics(_n.array([tg[f"left_{j}"] for j in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll")]))
 check("offer pose: tip there, pointing horizontally outward", e < 0.02 and abs(_T[2, 2]) < 0.1 and _T[0, 2] > 0.9, (e, _T[:3, 2]))
-p = bot.locate(400, 225); check("locate: image centre lands on the table in front of the arms", 0.1 < p["left"][0] < 0.5 and abs(p["left"][1] - p["right"][1]) > 0.15, p)
+import calib; p = bot.locate(300, 300); q = calib.project(calib.cam_now(), [p["left"]])[0]   # any calibration: locate inverts the projection
+check("locate: pixel -> table point -> the same pixel", abs(q[0] - 300) < 1 and abs(q[1] - 300) < 1 and abs(p["left"][2] + 0.02) < 1e-3
+      and abs(p["left"][1] - p["right"][1]) > 0.15, (p, q))
 bot.home()
 try: Robot(sock="/nonexistent/x.sock"); check("missing socket message", False)
 except RobotError as e: check("missing socket message", "not running" in str(e))

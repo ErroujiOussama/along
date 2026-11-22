@@ -571,6 +571,7 @@ RUN = {"p": None, "what": ""}                               # the skill process 
 PLAN = {"gen": 0}                                           # bumped by every new plan: an older sequence stops at its next step
 MAX_TURNS, MAX_DEPTH = 8, 3
 HEARD = {"t": 0.0}                                           # when the last request was heard                                 # model turns per request; skills inside skills
+EP_STALE = 600                                               # s: an episode nobody touched for this long is closed
 EP = {"id": None, "request": "", "status": "", "codex": False, "skills": []}   # the episode: one goal until confirmed/dropped
 
 
@@ -614,7 +615,7 @@ def summary(steps):
 
 
 def episode(status, **k):
-    EP.update(status=status, **k)
+    EP.update(status=status, touched=time.time(), **k)
     event("episode", json.dumps({"id": EP["id"], "status": status, "request": EP["request"][:200], "codex": EP["codex"],
                                  "skills": EP["skills"]}))
 
@@ -622,6 +623,9 @@ def episode(status, **k):
 def episode_ctx():
     if EP["id"] and EP.get("t", 0) < reset_t():           # Reset Al since it opened: forgotten
         EP.update(id=None, request="", status="", codex=False, skills=[])
+    if (EP["id"] and EP["status"] not in ("confirmed", "dropped") and not BUSY.is_set() and not codex_agent.busy()
+            and time.time() - EP.get("touched", 0) > EP_STALE):    # nobody touched it for 10 min: a new request starts fresh
+        episode("dropped"); event("sys", f"episode \"{EP['request'][:80]}\" closed: untouched for {EP_STALE // 60} min")
     if not EP["id"] or EP["status"] in ("confirmed", "dropped"):
         return "Open episode: none."
     return (f"Open episode: \"{EP['request'][:200]}\" ({EP['status']}{', Al asked whether it worked' if EP['status'] == 'asked' else ''}"
@@ -675,6 +679,8 @@ def act(plan, text, answered=False):
         if EP["id"] and EP["status"] not in ("confirmed", "dropped", "done"):
             episode("dropped")
         EP.update(id=f"e{time.time():.0f}", request=text, codex=False, skills=[], t=time.time()); episode("open")
+    if ep != "none" and EP["id"]:
+        EP["touched"] = time.time()
     if plan.get("_rid") and ep != "none" and EP["id"]:
         llm.tag(plan["_rid"], EP["id"])
     if not steps:

@@ -27,6 +27,9 @@
                                          tip xyz m + how far it moved since the last step)
                                          + ONE image snap_all.jpg (left | right wrist 400x225 on top, scene 800x450 below)
   robot raw "move left_elbow_flex -5; wait; snap"   raw robotd protocol, ';' chains, wait = until settled
+  robot calibrate                        scene camera + right base from the arms (~3 min, both arms move; Al off; ~20 paid
+                                         GPT-6.1 terra image calls point at the jaw tips: the frame diff alone was wrong on half),
+                                         scene.json only if better; per-point debug crops in snap_calibrate/
   robot shutdown [here]                  release torque after going home (or right here)
 
 Joints: pan lift elbow wrist roll gripper. Sides: left/l (white), right/r (orange).
@@ -480,6 +483,8 @@ def main(argv):
     elif cmd in ("collide", "handover", "object"):
         r = bot.call(" ".join(a if cmd == "object" else a[:2])); r.pop("ok", None)
         print(json.dumps(r, indent=1, ensure_ascii=False)); return
+    elif cmd == "calibrate":
+        import calib; sys.exit(0 if calib.run(bot) else 1)
     elif cmd == "speed":
         print(f"{bot.speed(float(a[1]))} deg/s"); return
     elif cmd == "stop":

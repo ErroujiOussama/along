@@ -79,6 +79,7 @@ bot.locate(400, 300); bot.right.ik(0.3, 0.05, 0.06)
 | `so101.py` · `robot.py` · `tui.py` | Python API · CLI · panel |
 | `kin.py`, `so101.urdf` | FK/IK (URDF from TheRobotStudio/SO-ARM100, meshes stripped) |
 | `calibration/` | servo calibration, the only copy (`tools/calibrate.sh` rewrites it) |
+| `scene.json` · `calib.py` | table, right base, scene camera · `robot calibrate` re-measures the camera (after it was bumped / `locate` misses) |
 | `poses.json` · `cams.json` | saved poses (`rest`, `ready`) · camera settings (scene: 50 Hz anti-flicker) |
 | `v4l.py` | V4L2 controls without v4l2-ctl |
 | `test_sim.py` | end-to-end checks against the sim |

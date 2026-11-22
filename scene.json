@@ -13,37 +13,42 @@
   "table_z": -0.02,
   "right_base_pose": {
     "position": [
-      0.00063,
-      -0.21287,
+      -0.02601,
+      -0.2039,
       0.0
     ],
-    "yaw_deg": 0.06,
-    "horizontal_uncertainty_m": 0.025,
-    "yaw_uncertainty_deg": 5
+    "yaw_deg": -10.34,
+    "horizontal_uncertainty_m": 0.01,
+    "yaw_uncertainty_deg": 2,
+    "calibrated_at": "2026-11-22T11:44:55+0100",
+    "calibrated_by": "robot calibrate"
   },
   "scene_camera": {
     "model": "Logitech C920",
     "position": [
-      0.61101,
-      -0.09175,
-      0.32695
+      0.71495,
+      -0.19999,
+      0.3461
     ],
     "forward": [
-      -0.81035,
-      0.05965,
-      -0.5829
+      -0.90113,
+      0.13706,
+      -0.41131
     ],
     "up": [
-      -0.58262,
-      0.02372,
-      0.8124
+      -0.41034,
+      0.03659,
+      0.9112
     ],
-    "focal_px": 679.2,
+    "focal_px": 780.0,
     "image_size_px": [
       800,
       450
     ],
-    "position_uncertainty_m": 0.05
+    "position_uncertainty_m": 0.01,
+    "calibrated_at": "2026-11-22T11:44:55+0100",
+    "calibrated_by": "robot calibrate",
+    "reprojection_px": 8.1
   },
   "kinematics": {
     "joint_order": [
