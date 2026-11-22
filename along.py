@@ -495,9 +495,8 @@ Actions:
   (if visible; else null and the arm goes to a default spot).
 - release: side opens and goes back to ready (drops what it holds).
 - turn: wrist roll of side by deg (+/-; 90 = quarter turn). tilt: wrist flex by deg (+ tips down).
-- press: side's closed jaws go 5 cm above a point, push down on it with full force
-  and come back up. object = that point (u, v, height_cm, dist_cm); side = the arm that reaches it. Unsure of the
-  position: step goto above it first, check, then press.
+- press: side's closed jaws go 5 cm above a point, a check looks whether they are right above it, then they push down
+  with full force and come back up. object = that point (u, v, height_cm, dist_cm); side = the arm that reaches it.
 - open: side's gripper opens (lets go), the arm stays. park: empty arms go to rest. reset: everything stops, both arms
   to rest.
 - stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").
@@ -728,8 +727,16 @@ def do_step(r, text, done, rest, last):
             return "press needs side = left or right and object = the point (scene pixel, height, distance)"
         x, y, z = pixel_xyz(side, o["u"], o["v"], o["height_cm"])   # the top's height places it; aims at the table:
         # the largest position error = the servos' full force on the top, held 1.5 s
-        cmds = [f"set {side}_gripper 0", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}",
-                f"push goto {side} {x:.3f} {y:.3f} 0.0", "wait 1.5", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}"]
+        from so101 import Robot
+        t = getattr(Robot(), side).tip()
+        if ((t[0] - x) ** 2 + (t[1] - y) ** 2) ** 0.5 < 0.04 and z < t[2] < z + 0.12:   # above it, checked: push from here
+            cmds = [f"set {side}_gripper 0", f"push goto {side} {t[0]:.3f} {t[1]:.3f} 0.0", "wait 1.5",
+                    f"goto {side} {t[0]:.3f} {t[1]:.3f} {t[2]:.3f}"]
+        else:                                             # first go above it; a check (fresh images) corrects, then this press
+            cmds = [f"set {side}_gripper 0", f"goto {side} {x:.3f} {y:.3f} {z + 0.05:.3f}"]
+            rest[:0] = [{"action": "check", "side": side, "what": f"{side} closed jaws right above {r.get('what') or 'the point'}"
+                         ", centered to press straight down (correct with a nudge or goto if not)"}, r]
+            speak = ""                                    # nothing to say yet: the press itself follows
         args = None
     elif a == "open":
         args = [a] + ([side] if side in ("left", "right") else [])
