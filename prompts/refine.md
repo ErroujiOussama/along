@@ -6,7 +6,7 @@ Current skills (skills/<name>/SKILL.md):
 {index}
 
 Read `ls skills/` and the used or closest SKILL.md first. Then patch the used skill, or create one new skill if none
-covers this task class, or save nothing if the skill already says it or nothing repeatable worked.
+covers this task class, or save nothing if a built-in action (press, hold, turn, ...) or a skill already does it, or nothing repeatable worked.
 
 A skill says what the task is, not how to do it step by step: the reader is as capable as you and sees live images.
 Write only the goal, what success looks like and, if the episode showed one, the single decision that mattered (e.g.

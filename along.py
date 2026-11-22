@@ -499,7 +499,7 @@ Actions:
   (if visible; else null and the arm goes to a default spot).
 - release: side opens and goes back to ready (drops what it holds).
 - turn: wrist roll of side by deg (+/-; 90 = quarter turn). tilt: wrist flex by deg (+ tips down).
-- press: push straight down on a point (button, pump) and back up: object = that point, depth_cm (default 4, harder 6-8).
+- press: push straight down on a point (button, pump) and back up, done (no check after): object = that point, depth_cm (default 4, harder 6-8).
   object null = straight down from where side's tip is now (once it is above the point, e.g. aligned with the wrist cam).
 - open: both grippers open (let go of everything). park: empty arms go to rest. reset: everything stops, both arms to rest.
 - stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").
