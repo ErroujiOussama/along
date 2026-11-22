@@ -223,8 +223,8 @@ class LiveVoice:
                 if time.time() > self.speak_until + 0.3:
                     if self.phase == "muted":
                         self.phase = "listening"
-                    if said.strip():
-                        event("live", said.strip()); said = ""
+                if said.strip() and time.time() - self.said_t > 1.2 and time.time() > self.speak_until + 0.3:
+                    event("live", " ".join(said.split())); said = ""      # one line per reply (deltas come word by word)
         finally:
             stop.set()
             try:
@@ -908,8 +908,8 @@ def skill(a):
         o = rstep(f"set {side}_gripper 0; goto {side} {rx:.3f} {ry:.3f} {rz:.3f}"); print(o)
         if robot_errs(o):
             sys.exit(f"press {side} FAILED: {'; '.join(robot_errs(o))}")
-        if far:                                     # wait above our limit: the person brings it under the gripper
-            say_bg("That's my limit, bring it under my gripper."); time.sleep(4.0)
+        if far:                                     # a moment at our limit: the person can bring it under the gripper
+            time.sleep(2.0)
         o = rstep(f"goto {side} {rx:.3f} {ry:.3f} {max(z - depth, 0.0):.3f}"); print(o)   # aims below the surface: the servos push
         if robot_errs(o):
             sys.exit(f"press {side} FAILED: {'; '.join(robot_errs(o))}")
