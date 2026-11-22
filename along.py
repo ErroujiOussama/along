@@ -555,6 +555,31 @@ def set_held(side, what):
 HOLD_AT = {"left": (0.25, -0.03, 0.17), "right": (0.25, 0.03, 0.17)}    # in front of the arm, at hand height
 
 
+def aim(side, what, roll):
+    """Where the person holds the object out (one fast scene-only vision call) -> an offer point ~6 cm in front of it
+    toward the arm, clamped to a comfortable reach, and the jaw roll (0 upright, 90 flat). Falls back to HOLD_AT."""
+    import math, re
+    q = (f'A person holds out {"a " + what if what != "object" else "an object"} for the {"orange" if side == "right" else "white"} '
+         'robot arm to take, or will put it there. Reply ONLY JSON: {"u": px, "v": px, "height_cm": rough height of the object '
+         'above the table, "pose": "upright" or "flat"} (u, v = the object centre in the scene image; flat = held horizontally). '
+         'If nothing is held out: {"u": null}.')
+    try:
+        ans = look(q, cams=("scene",))
+        j = json.loads(re.search(r"\{.*\}", ans, re.S).group(0))
+        if j.get("u") is None:
+            raise ValueError("nothing held out")
+        h = min(max(float(j.get("height_cm") or 15) / 100, 0.03), 0.35)
+        from so101 import Robot
+        ox, oy, oz = Robot().locate(float(j["u"]), float(j["v"]), h - 0.02)[side]
+        r = math.hypot(ox, oy); ux, uy = ox / r, oy / r
+        r = min(max(r - 0.06, 0.16), 0.30)
+        roll = 90 if j.get("pose") == "flat" else roll
+        return round(ux * r, 3), round(uy * r, 3), round(min(max(oz, 0.06), 0.25), 3), roll
+    except Exception as e:
+        log("aim: default spot,", e)
+        return (*HOLD_AT[side], roll)
+
+
 def skill(a):
     """along hold|release|turn|press|park ...: whole requests in one call, no questions asked."""
     cmd, side = a[0], (a[1] if len(a) > 1 else "")
@@ -564,12 +589,20 @@ def skill(a):
         rest = a[2:]; flat = "flat" in rest; rest = [r for r in rest if r != "flat"]
         nums = [float(r) for r in rest if r.replace(".", "", 1).lstrip("-").isdigit()]
         what = " ".join(r for r in rest if not r.replace(".", "", 1).lstrip("-").isdigit()) or "object"
-        x, y, z = nums[:3] if len(nums) >= 3 else HOLD_AT[side]
+        roll = 90 if flat else 0
+        if len(nums) >= 3:
+            x, y, z = nums[:3]
+        else:                                       # aim: one coarse move toward what the person holds out, turned to match
+            x, y, z, roll = aim(side, what, roll)
+        print(f"offer {side} at {x:.3f} {y:.3f} {z:.3f} roll {roll}")
         for attempt in (1, 2):
             ask = threading.Timer(4.0, say, args=("Ready, put it between my jaws.",)) if attempt == 1 else None
             ask and ask.start()                     # only if it is not already in there (offer closes once it sits still)
-            o = subprocess.run(["robot", "offer", side, str(x), str(y), str(z), "90" if flat else "0"], capture_output=True, text=True)
+            o = subprocess.run(["robot", "offer", side, f"{x:.3f}", f"{y:.3f}", f"{z:.3f}", str(roll)], capture_output=True, text=True)
             ask and ask.cancel()
+            if "unreachable" in (o.stderr + o.stdout) and (x, y, z) != HOLD_AT[side]:
+                x, y, z = HOLD_AT[side]                 # aimed out of reach: the default spot instead
+                o = subprocess.run(["robot", "offer", side, *map(str, HOLD_AT[side]), str(roll)], capture_output=True, text=True)
             try:
                 r = json.loads(o.stdout)
             except ValueError:                      # robotd down etc.: not a miss, say what broke
