@@ -350,7 +350,11 @@ def tell(text, fresh=False, wait=False):
     if env("ALONG_DRY"):                                   # test the daemon without Codex
         return log("(dry) ->", text)
     log("->", text); event("tell", ("[fresh] " if fresh else "") + text)
-    return codex_agent.run(text, fresh, on_event=event, on_reply=lambda m: say(m[:400]), wait=wait)
+    reply = (lambda m: CODEX_HELD.append(m[:400])) if wait else (lambda m: say(m[:400]))   # wait: the caller speaks it
+    return codex_agent.run(text, fresh, on_event=event, on_reply=reply, wait=wait)
+
+
+CODEX_HELD = []                                          # Codex's reply in a plan: spoken together with "Did that work?"
 
 
 # ---------------------------------------------------------------- vision
@@ -825,7 +829,7 @@ def run_plan(steps, text, rid, gen, cli=False):
         fr["steps"] = new
     if codex_ran and EP["id"] and not cli:               # Codex had to do it: only the person can say whether it worked
         last = codex_agent.state().get("last") or {}
-        if last.get("ok"):
+        if last.get("ok") and EP["status"] != "asked":
             say("Did that work?"); episode("asked")
     elif EP["id"] and not cli and EP["status"] == "open":
         episode("done")
@@ -865,7 +869,7 @@ def confirm_episode():
             m = re.search(r"^(?:created|patched) [\w-]+:\s*(.+)$", reply or "", re.M)
             summary = (m.group(1).strip() if m else f"how to {ch[0][0].replace('-', ' ')}")[:160]
             LEARN.update(names=[n for n, _ in ch], summary=summary, t=time.time())
-            say(f"I'd remember this for next time: {summary}. Should I keep it?")
+            say(f"I'd remember this for next time: {summary.rstrip('.')}. Should I keep it?")
             threading.Timer(LEARN_WAIT, learn_answer, (None,)).start()
     codex_agent.fork(task, on_event=event, on_done=finished)
 
@@ -889,6 +893,12 @@ def learn_answer(keep):
         say("Okay, I won't.")
 
 
+def geo_off(x, y, z):
+    """How far (m) a point is outside robotd's safe box (x 0.08..0.38, |y| <= 0.2, z 0..0.25); 0 = inside. Orientation-free:
+    the IK search in reachable() keeps the current gripper orientation and fails from poses like rest."""
+    return (max(0.08 - x, 0, x - 0.38) ** 2 + max(abs(y) - 0.2, 0) ** 2 + max(-z, 0, z - 0.25) ** 2) ** 0.5
+
+
 def out_of_reach(side, x, y, z, detail, say, cli):
     """A target > 4 cm past the arm's reach. The other arm reaches it -> the model is told to use it (exact command);
     else Al asks for it to be brought closer and the plan ends: a lower height on the same pixel only slides the target
@@ -897,14 +907,21 @@ def out_of_reach(side, x, y, z, detail, say, cli):
     s_ = collide.setup(); other = "left" if side == "right" else "right"
     w = collide.base_T(side, s_) @ np.r_[x, y, z, 1.0]
     ox, oy, oz = (np.linalg.inv(collide.base_T(other, s_)) @ w)[:3]
-    event("skill", detail)                                # the other arm: robotd's box + its radius (orientation-free:
-    if 0.08 <= ox <= 0.38 and abs(oy) <= 0.2 and -0.02 <= oz <= 0.25 and (ox * ox + oy * oy) ** 0.5 <= 0.36:   # it turns first)
+    event("skill", detail)
+    if geo_off(ox, oy, oz) < 0.02:                        # the other arm: inside its box (it turns first)
         return False, (f"{detail}. The {other} arm reaches that point: redo it with the {other} arm "
                        f"(goto {other} {ox:.3f} {oy:.3f} {oz:.3f}); not the same arm at another height.")
     if cli:
         return False, f"{detail}, and the other arm's too: ask the person to bring it closer."
     say("That's out of my reach. Can you bring it closer?")
     return False, None
+
+
+PX_FAR = {}                                               # plan generation -> a px goto was already told it is out of box
+
+
+def gen_now():
+    return PLAN["gen"]
 
 
 def do_step(r, text, done, last, cli=False):
@@ -928,6 +945,11 @@ def do_step(r, text, done, last, cli=False):
         tell(f"[task] {r.get('codex_prompt') or text}   || heard: {text}{before}; {now}; held {json.dumps(rd_held())}",
              fresh=bool(r.get("codex_fresh")), wait=True)
         last_ = codex_agent.state().get("last") or {}
+        rep = " ".join(CODEX_HELD).strip(); CODEX_HELD.clear()
+        if last and last_.get("ok") and EP["id"] and not cli:   # one line: two in a row and GPT-Live drops the second
+            say(f"{rep} Did that work?".strip()); episode("asked")
+        elif rep:
+            say(rep)
         done.append(f"codex: {last_.get('reply', '')[:200]}")
         return (True, None) if last_.get("ok") else (False, None)
     o = r.get("object")
@@ -948,8 +970,8 @@ def do_step(r, text, done, last, cli=False):
         h = (o.get("height_cm") or 0) / 100 - 0.02
         loc = Robot().locate(o["u"], o["v"], h)
         side = side if side in ("left", "right") else min(("left", "right"), key=lambda sd: loc[sd][0] ** 2 + loc[sd][1] ** 2)
-        x, y, z = loc[side]; rx, ry, rz = reachable(side, x, y, z + 0.04, drop=0.03)
-        if ((rx - x) ** 2 + (ry - y) ** 2) ** 0.5 > 0.04:
+        x, y, z = loc[side]
+        if geo_off(x, y, z + 0.04) > 0.04:
             return out_of_reach(side, x, y, z, f"press at {x:.2f} {y:+.2f} {z:.2f} is past the {side} arm's reach", say, cli)
         args = ["press", side, *(f"{v:.3f}" for v in loc[side]), str(r.get("depth_cm") or 4)]
     elif a in ("open", "park", "reset"):
@@ -966,6 +988,7 @@ def do_step(r, text, done, last, cli=False):
         RUN.update(p=None, what="step"); out = ""
         for c in cmds:                                    # one robot step each: a ';' chain sums into one target
             g = c.split()
+            src, c0 = (g[2] if g[0] == "goto" and len(g) == 6 else "xyz"), c
             if g[0] == "goto" and len(g) == 6 and g[2] == "px":   # goto <side> px u v z: the scene pixel at height z
                 from so101 import Robot
                 g = ["goto", g[1], *(f"{v:.3f}" for v in Robot().locate(float(g[3]), float(g[4]), float(g[5]))[g[1]])]
@@ -976,10 +999,18 @@ def do_step(r, text, done, last, cli=False):
                 g = ["goto", g[1], f"{bx:.3f}", f"{by:.3f}", g[5]]; c = " ".join(g)
             if g[0] == "goto" and len(g) == 5:            # coarse guesses: the nearest point the arm really reaches
                 x, y, z = map(float, g[2:5]); rx, ry, rz = reachable(g[1], x, y, z, drop=0.02)   # pull back, barely lower
-                off = ((rx - x) ** 2 + (ry - y) ** 2 + (rz - z) ** 2) ** 0.5
-                if off > 0.04:                            # far out of reach: decided here, not by the model
-                    return out_of_reach(g[1], x, y, z, f"{c} is {off * 100:.0f} cm past the {g[1]} arm's reach", say, cli)
-                if off > 0.005:
+                off = ((rx - x) ** 2 + (ry - y) ** 2 + (rz - z) ** 2) ** 0.5 if rx != float("inf") else 0.0  # none found: robotd decides
+                far = geo_off(x, y, z)
+                if far > 0.04 and src == "px" and not PX_FAR.get(gen_now()):   # a pixel is a ray: the height guess may be wrong
+                    PX_FAR[gen_now()] = True
+                    return False, (f"{c0} -> {x:.2f} {y:+.2f} "
+                                   f"{z:.2f} is {far * 100:.0f} cm outside the arm's box. A scene pixel at a guessed height "
+                                   f"slides along the camera ray: a too-high height puts it too far forward. Locate it from "
+                                   f"where the object stands instead: goto <side> base u v z (u v = its foot on the table). "
+                                   f"Do not retry the same pixel at another height.")
+                if far > 0.04 or off > 0.04 and far > 0:  # far out of reach: decided here, not by the model
+                    return out_of_reach(g[1], x, y, z, f"{c} is {max(far, off) * 100:.0f} cm past the {g[1]} arm's reach", say, cli)
+                if 0.005 < off <= 0.04:
                     c = f"goto {g[1]} {rx:.3f} {ry:.3f} {rz:.3f}"; event("skill", f"{' '.join(g)} is past the arm's reach: {c}")
             o_ = rstep(c)
             if g[0] == "goto" and len(g) == 5 and any("ik fails at waypoint" in e for e in robot_errs(o_)):
