@@ -614,13 +614,17 @@ def aim_seen(what="object"):
     Cached in AIM (the daemon prefetches it the moment a request arrives, while Al is still thinking)."""
     import re
     q = (f'A person holds out {"a " + what if what != "object" else "an object"} for one of the robot arms to take, or is about '
-         'to. Reply ONLY JSON: {"u": px, "v": px, "height_cm": rough height of the object above the table, "pose": "upright" '
-         'or "flat"} (u, v = the object centre in the scene image; flat = held horizontally). If nothing is held out: {"u": null}.')
+         'to. Geometry for scale: the scene camera sits 33 cm above the table, 70 cm from each arm base (both bases are on '
+         'the table, 21 cm apart); an arm is ~40 cm long when stretched out. Use the wrist views too where they show it. '
+         'Reply ONLY JSON: {"u": px, "v": px, "dist_cm": distance of the object centre from the scene camera, "height_cm": '
+         'height of the object centre above the table, "size_cm": its longest dimension, "pose": "upright" or "flat", '
+         '"axis_deg": angle of its long axis in the scene image (0 = horizontal, 90 = vertical)} (u, v = the object centre in '
+         'the scene image; flat = held horizontally). If nothing is held out: {"u": null}.')
     def put(d):
         json.dump(d, open(AIM + ".tmp", "w")); os.replace(AIM + ".tmp", AIM)     # atomic: hold may read it meanwhile
     put({"t": time.time(), "pending": True})
     try:
-        j = json.loads(re.search(r"\{.*\}", look(q, cams=("scene",)), re.S).group(0))
+        j = json.loads(re.search(r"\{.*\}", look(q, cams=("scene", "left", "right")), re.S).group(0))
     except Exception as e:
         j = {"u": None, "error": str(e)}
     put({"t": time.time(), **j})
@@ -642,9 +646,20 @@ def aim(side, what, roll):
             event("aim", f"using the prefetched look ({time.time() - j['t']:.0f} s old)")
         if j.get("u") is None:
             raise ValueError("nothing held out")
-        h = min(max(float(j.get("height_cm") or 15) / 100, 0.03), 0.35)
+        import numpy as np
+        c = json.load(open(f"{HERE}/scene.json"))["scene_camera"]           # the pixel fixes a ray; height and distance
+        f, up = np.array(c["forward"]), np.array(c["up"]); rr = np.cross(f, up)  # each pick a point on it: average the two
+        ray = f + rr * (float(j["u"]) - W / 2) / c["focal_px"] - up * (float(j["v"]) - H / 2) / c["focal_px"]
+        ray /= np.linalg.norm(ray)
+        zs = {"height": float(j["height_cm"]) / 100 - 0.02} if j.get("height_cm") is not None else {}
+        if j.get("dist_cm"):
+            zs["distance"] = c["position"][2] + ray[2] * float(j["dist_cm"]) / 100
+        z = min(max(sum(zs.values()) / len(zs) if zs else 0.13, 0.01), 0.33)
+        h = z + 0.02
+        event("aim", "height above table: " + ", ".join(f"{k} says {v * 100 + 2:.0f} cm" for k, v in zs.items())
+                     + f" -> {h * 100:.0f} cm" + (f"; size {j['size_cm']} cm, axis {j.get('axis_deg')} deg" if j.get("size_cm") else ""))
         from so101 import Robot
-        loc = Robot().locate(float(j["u"]), float(j["v"]), h - 0.02)
+        loc = Robot().locate(float(j["u"]), float(j["v"]), z)
         if side not in ("left", "right"):          # the arm whose base is closer
             side = min(("left", "right"), key=lambda sd: math.hypot(*loc[sd][:2]))
         ox, oy, oz = loc[side]
@@ -668,7 +683,7 @@ def skill(a):
         a = [a[0], "auto", *a[1:]]                  # along hold [what]: the arm nearer to the object
     side = a[1] if len(a) > 1 else ""
     event("skill", "along " + " ".join(a))
-    if side and side not in ("left", "right", "auto"):
+    if side and side not in ("left", "right", "auto") and cmd != "fresh":
         sys.exit("side = left | right")
     if cmd == "hold":                               # along hold <side> [what] [flat] [x y z]
         rest = a[2:]; flat = "flat" in rest; rest = [r for r in rest if r != "flat"]
@@ -720,6 +735,12 @@ def skill(a):
         interrupt_codex()
         print(rstep("set left_gripper 45; set right_gripper 45")); json.dump({}, open(HELD, "w")); event("held", "{}")
         print(rstep("recall ready left; recall ready right")); print(rstep("recall rest left; recall rest right"))
+    elif cmd == "fresh":                            # along fresh: Codex back to just its brief (dashboard "Reset Al")
+        event("sys", "resetting Codex: new session with only the brief")
+        interrupt_codex(); tmux("kill-session", "-t", TMUX); time.sleep(0.5)
+        with TELL:
+            codex_up()
+        print("Codex reset: fresh session, brief only")
     elif cmd == "park":                             # along park: arms that hold nothing go to rest
         h = rd_held()
         print(rstep("; ".join(f"recall rest {sd}" for sd in ("left", "right") if sd not in h) or ""))
@@ -743,7 +764,7 @@ def main():
         else:
             h[side] = what
         json.dump(h, open(HELD, "w")); event("held", json.dumps(h)); print(h)
-    elif a[0] in ("hold", "release", "turn", "tilt", "press", "park", "open", "reset"):
+    elif a[0] in ("hold", "release", "turn", "tilt", "press", "park", "open", "reset", "fresh"):
         skill(a)
     elif a[0] == "look":
         print(look(" ".join(a[1:])))

@@ -48,7 +48,7 @@ systemctl --user start along   # daemon (along.service; link it like robotd.serv
                                # (tmux `along` on the default server, brief prompts/along.md) and speaks Al's final reply
 along attach           # watch / type into Al's Codex session
 along on · along off   # (or the /along buttons); off = voice off + interrupt Al, arms stay put
-along open · along reset   # release both grips · stop everything, open, both arms to rest (also /along buttons)
+along open · along reset · along fresh   # release both grips · stop everything, both arms to rest · Codex back to only its brief (also /along buttons)
 along hold|release|turn|tilt|press|park ...   # one-call skills Al uses (see along.py --help)
 along look "where is the toothbrush?" · along tell "[voice] hold this"   # vision · type into Al's session
 ```

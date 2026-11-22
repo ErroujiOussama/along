@@ -38,7 +38,7 @@ label{font-size:12px;color:var(--dim)}
 #vad i{display:block;height:100%;background:#fff}
 </style></head><body>
 <header><b>along</b><span id="chips"></span><span style="flex:1"></span><a href="/">cameras</a><a href="/inspect">inspector</a></header>
-<div style="display:flex;background:#1a1a1a;gap:8px;padding:8px 10px"><button id="on" style="font-size:18px;padding:6px 22px;background:#1f6f34;color:#fff">Along ON</button><button id="off" style="font-size:18px;padding:6px 22px">Along OFF</button><span style="flex:1"></span><button id="open" style="font-size:16px;padding:6px 16px">Release grips</button><button id="reset" style="font-size:16px;padding:6px 16px;background:#8b1d1d;color:#fff">Reset arms</button></div>
+<div style="display:flex;background:#1a1a1a;gap:8px;padding:8px 10px"><button id="on" style="font-size:18px;padding:6px 22px;background:#1f6f34;color:#fff">Along ON</button><button id="off" style="font-size:18px;padding:6px 22px">Along OFF</button><span style="flex:1"></span><button id="open" style="font-size:16px;padding:6px 16px">Release grips</button><button id="fresh" style="font-size:16px;padding:6px 16px" title="Codex starts over with only its brief: forgets this conversation">Reset Al</button><button id="reset" style="font-size:16px;padding:6px 16px;background:#8b1d1d;color:#fff">Reset arms</button></div>
 <div id="banner" class="idle">…</div>
 <main>
  <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
@@ -120,6 +120,7 @@ $('f').onsubmit = e => { e.preventDefault(); const t = $('txt').value.trim(), c 
 $('on').onclick = () => doit('on'); $('off').onclick = () => doit('off');
 $('open').onclick = () => doit('open');
 $('reset').onclick = () => confirm('Stop Al, open both grippers and move both arms to rest?') && doit('reset');
+$('fresh').onclick = () => confirm('Reset Al? Codex forgets everything since its brief (arms stay put).') && doit('fresh');
 $('wake').onclick = () => doit('wake');
 $('idle').onclick = () => confirm('Store what the scene shows now as the idle baseline?') && doit('idle');
 </script></body></html>

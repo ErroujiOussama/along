@@ -175,7 +175,7 @@ def along_api(h, u):
         return send(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes(), "image/jpeg")
     if u.path == "/along/do":
         q = dict(parse_qsl(u.query)); cmd = q.get("cmd", "")
-        if cmd not in ("tell", "say", "wake", "idle", "on", "off", "open", "reset"):
+        if cmd not in ("tell", "say", "wake", "idle", "on", "off", "open", "reset", "fresh"):
             return send(b'{"error": "cmd?"}', "application/json")
         args = [f"{here}/.venv/bin/python", f"{here}/along.py", cmd] + ([q["text"]] if q.get("text") else [])
         subprocess.Popen(args, cwd=here, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
