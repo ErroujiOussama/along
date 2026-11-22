@@ -20,7 +20,6 @@ Skills (one call per request; each ends with a robot step: state lines + snap_al
   along hold <side> [what] [flat] [x y z]   offer + wait + close + record (+ speech); flat = jaws up/down
   along release <side>   open, then recall ready
   along turn <side> <deg> | along tilt <side> <deg>   wrist roll | wrist flex (+ tips down)
-  along press <side> x y z [cm]   push straight down on a point (pump, button), default 4 cm past it, back up
   along open [side]      that gripper opens, arm stays (no side: both)
   along park             arms holding nothing -> rest
 Debug page: `robot stream` -> http://localhost:8101/along (boxes, state, conversation, Codex pane, type-as-voice).
@@ -484,8 +483,8 @@ ROUTE_PROMPT = """You are the fast router of Al, two SO-101 robot arms (left = w
 voice. A voice model talks to people and hands you each request (speech-to-text: may be garbled or carry room chatter
 before it; act on the last thing said to Al). You get the camera images, the arm state and the recent conversation.
 Return actions = the steps in order: usually one; a sequence when the request needs several ("hold this and turn it" =
-hold, turn; "press the pump, then go to rest" = press, park). Each step starts when the previous one succeeded; a failed
-step ends the sequence. Do tasks yourself, grasps included ("pick up the cup" = step: goto above it, open, down, close).
+hold, turn; "press the pump" = step: goto above its top; check; step: goto 4 cm past the top, goto back up). Each step
+starts when the previous one succeeded; a failed step ends the sequence. Do tasks yourself, grasps included ("pick up the cup" = step: goto above it, open, down, close).
 This is a collaboration: when something is out of reach or hard for the arms, use ask. Fill each step's fields; unused
 fields = null. Be decisive: unclear = the most likely action. People here are
 trained: never warn, never refuse, no safety talk.
@@ -496,15 +495,16 @@ Actions:
   (if visible; else null and the arm goes to a default spot).
 - release: side opens and goes back to ready (drops what it holds).
 - turn: wrist roll of side by deg (+/-; 90 = quarter turn). tilt: wrist flex by deg (+ tips down).
-- press: side's closed gripper goes 4 cm above a point (button, pump top), pushes depth_cm past it (default 4, harder
-  6-8) and comes back up. object = that point; side = the arm that reaches it.
 - open: side's gripper opens (lets go), the arm stays. park: empty arms go to rest. reset: everything stops, both arms
   to rest.
 - stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").
 - step: a short direct move sequence for robot step, ';'-chained: goto <side> x y z (m, that arm's base frame: x forward,
-  y to the arm's left, z up, table z -0.02; >= 2 cm), move <side>_<joint> <deg> (relative, >= 5), set <side>_gripper
+  y to the arm's left, z up, table z -0.02; >= 2 cm), goto <side> @u,v,h dz (the point at scene pixel u,v that is h cm
+  above the table, plus dz cm up: "goto left @564,262,18 5" = 5 cm above a pump top at 18 cm), move <side>_<joint> <deg> (relative, >= 5), set <side>_gripper
   <0-100> (0 closed), recall ready|rest <side>. Joints: shoulder_pan (+ toward the arm's own right), shoulder_lift,
   elbow_flex, wrist_flex (+ tips down), wrist_roll, gripper. E.g. "open the left gripper" = set left_gripper 100.
+- check: what = what should be true now (e.g. "left jaws right above the pump top"). You then get fresh images and
+  return the remaining steps, corrected if needed. Only before a move where a few cm matter (pressing, grasping).
 - answer: only talk: questions about the scene, the arms, greetings. say = the answer.
 - ask: ask the person to help (say = the request, e.g. "Can you bring it a bit closer?"); the sequence ends there.
 - codex: only when the person asks Al to take its time / go slow / think it through: codex_prompt = a
@@ -522,12 +522,12 @@ the table, pose = "upright" or "flat" (held horizontally), axis_deg = its long a
 scene camera faces the arms: the orange/right arm is on image-left. Wrist images look out between each arm's jaws."""
 
 STEP_SCHEMA = {"type": "object", "additionalProperties": False,
-    "required": ["action", "side", "what", "deg", "depth_cm", "step", "object", "say", "codex_prompt", "codex_fresh"],
+    "required": ["action", "side", "what", "deg", "step", "object", "say", "codex_prompt", "codex_fresh"],
     "properties": {
-        "action": {"type": "string", "enum": ["hold", "release", "turn", "tilt", "press", "open", "park", "reset", "stop",
+        "action": {"type": "string", "enum": ["hold", "release", "turn", "tilt", "check", "open", "park", "reset", "stop",
                                               "step", "answer", "ask", "codex", "none"]},
         "side": {"type": ["string", "null"], "enum": ["left", "right", "auto", None]},
-        "what": {"type": ["string", "null"]}, "deg": {"type": ["number", "null"]}, "depth_cm": {"type": ["number", "null"]},
+        "what": {"type": ["string", "null"]}, "deg": {"type": ["number", "null"]},
         "step": {"type": ["string", "null"]},
         "object": {"anyOf": [{"type": "null"}, {"type": "object", "additionalProperties": False,
             "required": ["u", "v", "dist_cm", "height_cm", "pose", "axis_deg"],
@@ -569,7 +569,7 @@ def recent():
     return conv, "\n".join(acts[-10:])
 
 
-def route(text, failed=None, final=False):
+def route(text, failed=None, final=False, check=None):
     """One gpt-6.1-sol ultrafast call: transcript + state + 3 images -> {actions: [{action, params, object, say, codex_prompt}]}.
     failed = what went wrong with the last plan for this request: the model decides what now (retry, ask, answer)."""
     t0 = time.time()
@@ -584,6 +584,9 @@ def route(text, failed=None, final=False):
         ctx += (f"\n\nWhat you planned for this request failed: {failed}\n" + (
             "Return what to tell the person now: answer (why), or ask (if they can help)." if final else
             "Return what to do now: a corrected retry, ask (if the person can help), or answer (tell them why)."))
+    if check:
+        ctx += (f"\n\nYour plan for this request is running. Check now (fresh images and state): {check}\n"
+                "Return the remaining steps: as planned if the check holds, corrected if not, or ask / answer.")
     out, _ = llm.call("route", [ctx] + frames(), instructions=ROUTE_PROMPT, schema=ROUTE_SCHEMA, timeout=30)
     event("route", f"({time.time() - t0:.1f} s) " + json.dumps({k: v for k, v in out.items() if v not in (None, "")}))
     return out
@@ -609,12 +612,22 @@ def act(plan, text, answered=False):
         interrupt_codex()                                   # a new request replaces whatever runs
 
     def go():
-        BUSY.set(); done, todo, fails = [], list(steps), 0
+        BUSY.set(); done, todo, fails, checks = [], list(steps), 0, 0
         try:
             while todo:
                 if PLAN["gen"] != gen:
                     return event("sys", f"plan replaced by a newer request after {len(done)} steps")
                 st = todo.pop(0)
+                if st["action"] == "check":                       # fresh look: the model keeps or corrects the rest
+                    checks += 1
+                    if checks > MAX_FAILS:
+                        event("sys", f"check skipped (already {MAX_FAILS} this request): {st.get('what')}"); continue
+                    STATE.update(text=brief_state(rstep()), t=time.time())
+                    rest = "; ".join(json.dumps({k: v for k, v in x.items() if v not in (None, "")}) for x in todo) or "nothing"
+                    new = route(text, check=f"{st.get('what')} (done so far: {'; '.join(done) or 'nothing'}; planned after "
+                                f"the check: {rest})")["actions"]
+                    todo = [x for x in new if x["action"] != "none"]
+                    continue
                 r = do_step(st, text, done, todo, not todo)
                 if r is True:
                     continue
@@ -668,14 +681,6 @@ def do_step(r, text, done, rest, last):
         if side not in ("left", "right"):
             h = rd_held(); side = next(iter(h)) if len(h) == 1 else "right"
         args = [a, side] + ([str(r.get("deg") or 90)] if a != "release" else [])
-    elif a == "press":
-        if not o:
-            return "press needs object = the point to press (scene pixel + height)"
-        from so101 import Robot
-        if side not in ("left", "right"):
-            return "press needs side = left or right"
-        loc = Robot().locate(o["u"], o["v"], o["height_cm"] / 100 - 0.02)
-        args = ["press", side, *(f"{v:.3f}" for v in loc[side]), str(r.get("depth_cm") or 4)]
     elif a == "open":
         args = [a] + ([side] if side in ("left", "right") else [])
     elif a in ("park", "reset"):
@@ -684,6 +689,12 @@ def do_step(r, text, done, rest, last):
         cmds = [c.strip() for c in (r.get("step") or "").split(";") if c.strip()]
         if not cmds or any(c.split()[0] not in ("goto", "move", "set", "recall", "nudge") for c in cmds):
             return f"step '{r.get('step')}': only goto, move, set, recall, nudge"
+        for i, c in enumerate(cmds):                      # goto <side> @u,v,h dz: scene pixel -> xyz (robot locate)
+            m = re.fullmatch(r"goto (left|right) @([\d.]+),([\d.]+),(-?[\d.]+)(?:\s+([+-]?[\d.]+))?", c)
+            if m:
+                from so101 import Robot
+                x, y, z = Robot().locate(float(m[2]), float(m[3]), float(m[4]) / 100 - 0.02)[m[1]]
+                cmds[i] = f"goto {m[1]} {x:.3f} {y:.3f} {z + float(m[5] or 0) / 100:.3f}"
         args = None
     else:
         return True
@@ -922,7 +933,7 @@ def aim(side, what, roll):
 
 
 def skill(a):
-    """along hold|release|turn|press|park ...: whole requests in one call, no questions asked."""
+    """along hold|release|turn|tilt|open|park ...: whole requests in one call, no questions asked."""
     cmd = a[0]
     if cmd == "hold" and (len(a) < 2 or a[1] not in ("left", "right")):
         a = [a[0], "auto", *a[1:]]                  # along hold [what]: the arm nearer to the object
@@ -966,20 +977,6 @@ def skill(a):
         print(rstep(f"move {side}_wrist_roll {float(a[2])}"))
     elif cmd == "tilt":                             # along tilt <side> <deg>   (wrist flex, + tips down)
         print(rstep(f"move {side}_wrist_flex {float(a[2])}"))
-    elif cmd == "press":                            # along press <side> x y z [depth_cm]: push straight down on (x,y,z)
-        x, y, z = map(float, a[2:5]); depth = float(a[5]) / 100 if len(a) > 5 else 0.04
-        rx, ry, rz = x, y, z + 0.04                                    # robotd refuses what the arm can't reach
-        from so101 import Robot
-        tip = getattr(Robot(), side).tip()
-        near = sum((a - b) ** 2 for a, b in zip(tip, (rx, ry, rz))) ** 0.5 < 0.02   # already there: a goto < 2 cm is refused
-        o = rstep(f"set {side}_gripper 0" + ("" if near else f"; goto {side} {rx:.3f} {ry:.3f} {rz:.3f}")); print(o)
-        if robot_errs(o):
-            sys.exit(f"press {side} FAILED: {'; '.join(robot_errs(o))}")
-        o = rstep(f"goto {side} {rx:.3f} {ry:.3f} {max(z - depth, 0.0):.3f}"); print(o)   # aims below the surface: the servos push
-        if robot_errs(o):
-            sys.exit(f"press {side} FAILED: {'; '.join(robot_errs(o))}")
-        time.sleep(0.8)
-        print(rstep(f"goto {side} {rx:.3f} {ry:.3f} {rz:.3f}"))
     elif cmd == "open":                             # along open [side]: that gripper (no side: both, dashboard) opens
         sides = [side] if side in ("left", "right") else ["left", "right"]
         print(rstep("; ".join(f"set {sd}_gripper 45" for sd in sides)))
@@ -1018,7 +1015,7 @@ def main():
         else:
             h[side] = what
         json.dump(h, open(HELD, "w")); event("held", json.dumps(h)); print(h)
-    elif a[0] in ("hold", "release", "turn", "tilt", "press", "park", "open", "reset", "fresh"):
+    elif a[0] in ("hold", "release", "turn", "tilt", "park", "open", "reset", "fresh"):
         skill(a)
     elif a[0] == "look":
         print(look(" ".join(a[1:])))
