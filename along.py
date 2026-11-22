@@ -92,7 +92,7 @@ def chime(freq=660, dur=0.12):
 def tones(f1, f2, vol=0.35):
     """Two short tones in the background: rising (660 -> 990 Hz) = Al is on, falling = Al is off."""
     import numpy as np
-    r = 24000; t = np.arange(int(r * 0.11)) / r
+    r = LiveVoice.RATE; t = np.arange(int(r * 0.11)) / r                # same raw format as GPT-Live's speaker stream
     env_ = np.minimum(1, np.minimum(t, t[-1] - t) / 0.01)            # 10 ms fade in/out: no clicks
     gap = np.zeros(int(r * 0.03))
     pcm = (np.concatenate([np.sin(2 * np.pi * f1 * t) * env_, gap, np.sin(2 * np.pi * f2 * t) * env_]) * vol * 32767)
