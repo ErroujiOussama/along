@@ -356,31 +356,40 @@ class Robot:
         q = best[0].copy(); q[4] += roll
         return {f"{side}_{j}": round(float(v), 2) for j, v in zip(collide.J, q)}, round(best[1], 4)
 
-    def offer(self, side, x, y, z, roll=0.0, open_pct=45, timeout=90.0):
+    def offer(self, side, x, y, z, roll=0.0, open_pct=45, timeout=90.0, confirm=None):
         """Human hand-over: move the gripper to (x, y, z) m (this arm's base frame), pointing horizontally at the person,
         jaws open, then wait until something is placed between the jaws and stays still, close, and check HOLDING.
-        A false trigger (closed on nothing) reopens and waits again. -> {"holding": bool, "tries": n, "waited_s": t}."""
+        A false trigger (closed on nothing) reopens and waits again. confirm(wrist image) -> bool (e.g. a vision model):
+        the camera diff is then only a pre-filter (low thresholds: thin things count), confirm decides when to close.
+        -> {"holding": bool, "tries": n, "waited_s": t, "asked": confirm calls}."""
         import numpy as np, cv2
         targets, err = self.offer_pose(side, x, y, z, roll)
         if err > 0.03:
             raise RobotError(f"offer pose unreachable (off by {err * 100:.1f} cm): pick a point closer to the arm")
         targets[f"{side}_gripper"] = open_pct
         self.set(targets)
-        t0, tries = time.time(), 0
+        t0, tries, asked = time.time(), 0, 0
+        enter, stay, frames = (10, 8, 3) if confirm else (25, 18, 5)   # with confirm: a cheap pre-filter only
 
         def roi():
             g = cv2.cvtColor(self.thumb(side, 160, 90), cv2.COLOR_BGR2GRAY).astype(np.float32)
             return cv2.GaussianBlur(g[40:90, 60:130], (5, 5), 0)     # the jaw gap (object close = big change; background = small)
         while time.time() - t0 < timeout:
-            time.sleep(0.5); base = roi(); prev, still, entered = base, 0, False
+            time.sleep(0.5); base = roi(); prev, still, entered, ask_t = base, 0, False, 0.0
             while time.time() - t0 < timeout:
                 time.sleep(0.12); cur = roi()
                 d_base, d_prev = float(np.abs(cur - base).mean()), float(np.abs(cur - prev).mean())
                 prev = cur
-                entered = entered or d_base > 25
-                still = still + 1 if entered and d_base > 18 and d_prev < 9 else 0   # a hand still holding it jitters
-                if still >= 5:                     # something new between the jaws, held about still ~0.6 s
-                    break
+                entered = entered or d_base > enter
+                still = still + 1 if entered and d_base > stay and d_prev < 9 else 0   # a hand still holding it jitters
+                if still >= frames:                # something new between the jaws, held about still
+                    if not confirm:
+                        break
+                    if time.time() - ask_t > 1.5:  # the model looks: is it really in the jaws?
+                        ask_t, asked = time.time(), asked + 1
+                        ok = confirm(self.thumb(side, 640, 360))
+                        if ok or (ok is None and d_base > 18):   # None = the model failed: the old diff rule
+                            break
             else:
                 break
             tries += 1
@@ -392,9 +401,10 @@ class Robot:
                     break
             seen = float(np.abs(roi() - base).mean())
             if g[-1] >= 3.5 or seen > 18:          # thin things stop low: the object still in view counts too
-                return {"holding": True, "tries": tries, "gripper": round(g[-1], 1), "waited_s": round(time.time() - t0, 1)}
+                return {"holding": True, "tries": tries, "gripper": round(g[-1], 1), "waited_s": round(time.time() - t0, 1),
+                        "asked": asked}
             self.set({f"{side}_gripper": open_pct})   # closed on nothing: reopen, wait again
-        return {"holding": False, "tries": tries, "waited_s": round(time.time() - t0, 1)}
+        return {"holding": False, "tries": tries, "waited_s": round(time.time() - t0, 1), "asked": asked}
 
     def save(self, name):
         self.call(f"save {name}")

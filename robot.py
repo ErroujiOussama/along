@@ -351,6 +351,30 @@ def stream(names, port):
         pass
 
 
+def in_jaws(side):
+    """Hand-over check: GPT-6.1 terra looks at the wrist image (intended spend: one call per pre-filter hit, >= 1.5 s
+    apart). None (no key) = offer's camera-diff thresholds alone."""
+    import llm
+    from along import env
+    llm.SPEND, llm.API_KEY = True, env("OPENAI_API_KEY")
+    if not llm.API_KEY:
+        return None
+    arm = "white" if side == "left" else "orange"
+    q = (f"Wrist camera of the {arm} robot arm's gripper; its two open jaws are at the bottom of the image. A person is "
+         f"handing it something. in_jaws = true only if an object is now inside the gap between the jaws, so closing "
+         f"them would grab it (a hand or object only near, in front of or behind the jaws does not count).")
+    schema = {"type": "object", "additionalProperties": False, "required": ["in_jaws"], "properties": {"in_jaws": {"type": "boolean"}}}
+
+    def ask(img):
+        try:
+            r, _ = llm.call("hold", [q, ("wrist image", llm.image_url(img))], schema=schema,
+                            model=env("ALONG_HOLD_MODEL", "gpt-6.1-terra"), tier="default", effort="low", timeout=10)
+            return r["in_jaws"]
+        except Exception as e:                       # model down: offer falls back to its camera-diff thresholds
+            print(f"in_jaws check failed: {e}", file=sys.stderr); return None
+    return ask
+
+
 def main(argv):
     as_json, wait = "--json" in argv, "--no-wait" not in argv
     a = [x for x in argv if x not in ("--json", "--no-wait")]
@@ -440,7 +464,7 @@ def main(argv):
     elif cmd == "nudge":
         print(json.dumps(getattr(bot, side(a)).nudge(*map(float, a[2:5]), wait=wait))); return
     elif cmd == "offer":
-        v = list(map(float, a[2:6])); print(json.dumps(bot.offer(side(a), *v))); return
+        v = list(map(float, a[2:6])); print(json.dumps(bot.offer(side(a), *v, confirm=in_jaws(side(a))))); return
     elif cmd == "locate":
         print(json.dumps(bot.locate(*map(float, a[1:4])))); return
     elif cmd == "tip":
