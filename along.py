@@ -390,7 +390,13 @@ def watch(mic):
 ROUTE_PROMPT = """You are the fast router of Al, two SO-101 robot arms (left = white, right = orange) on a lab table, run by
 voice. A voice model talks to people and hands you each request (speech-to-text: may be garbled or carry room chatter
 before it; act on the last thing said to Al). You get the camera images, the arm state and the recent conversation.
-Pick ONE action and fill its fields; unused fields = null. Be decisive: unclear = the most likely action. People here are
+Return actions = the steps in order: usually one; a sequence when the request needs several ("hold this and turn it" =
+hold, turn; "take it and put it in the cup" = hold, codex). Each step starts when the previous one succeeded; a failed
+step ends the sequence. codex, if needed, is the last step (it is told what the steps before did and what Al said).
+Hard tasks: start right away with what you can do fast and hand the rest to codex, e.g. "pick up the cup" = step (coarse
+goto ~8 cm above/in front of it, gripper open; say e.g. "Let me get that cup.") then codex (the precise grasp); ask the
+person for help in a say when it helps ("Hold it a bit closer to me."). Fill each step's
+fields; unused fields = null. Be decisive: unclear = the most likely action. People here are
 trained: never warn, never refuse, no safety talk.
 
 Actions:
@@ -411,16 +417,17 @@ Actions:
   self-contained instruction for the slower agent with all you know (object, where it is in px, which arm).
   codex_fresh = true when the task has nothing to do with what Codex did recently (it then starts from a clean session,
   faster and not confused by old context); false to continue its context ("now do the same with the other arm").
-- none: not addressed to Al (chatter, other conversations, other languages not meant for Al): say = "".
+- none: not addressed to Al (chatter, other conversations, other languages not meant for Al): actions = [none], say = "".
 
-say = what Al says when the action is done: ONE short sentence ("Done.", "Here you go.", an answer of at most ~12 words). For hold leave it ""
+say = what Al says when that step is done: ONE short sentence ("Done.", "Here you go.", an answer of at most ~12 words), or
+"" for nothing (in a sequence usually only the last step speaks; a last step with "" says "Done."). For hold leave it ""
 (the hold reports itself). object: u, v = pixel in the scene image (800x450) of the point to grab (a long thing: the
 middle of its handle, not the bristles/head), dist_cm = its distance from the scene camera, height_cm = its height above
 the table, pose = "upright" or "flat" (held horizontally), axis_deg = its long axis in the scene image (0 horizontal,
 90 vertical). Scale: the scene camera is 33 cm above the table and 70 cm from each arm base (bases 21 cm apart); the
 scene camera faces the arms: the orange/right arm is on image-left. Wrist images look out between each arm's jaws."""
 
-ROUTE_SCHEMA = {"type": "object", "additionalProperties": False,
+STEP_SCHEMA = {"type": "object", "additionalProperties": False,
     "required": ["action", "side", "what", "deg", "depth_cm", "step", "object", "say", "codex_prompt", "codex_fresh"],
     "properties": {
         "action": {"type": "string", "enum": ["hold", "release", "turn", "tilt", "press", "open", "park", "reset", "stop",
@@ -435,7 +442,11 @@ ROUTE_SCHEMA = {"type": "object", "additionalProperties": False,
                            "axis_deg": {"type": ["number", "null"]}}}]},
         "say": {"type": "string"}, "codex_prompt": {"type": ["string", "null"]}, "codex_fresh": {"type": ["boolean", "null"]}}}
 
+ROUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["actions"],
+                "properties": {"actions": {"type": "array", "items": STEP_SCHEMA}}}
+
 RUN = {"p": None, "what": ""}                               # the skill process the router started (stop kills it)
+PLAN = {"gen": 0}                                           # bumped by every new plan: an older sequence stops at its next step
 
 
 def frames(cams=("scene", "left", "right")):
@@ -466,7 +477,7 @@ def recent():
 
 
 def route(text):
-    """One gpt-6.1-sol ultrafast call: transcript + state + 3 images -> {action, params, object, say, codex_prompt}."""
+    """One gpt-6.1-sol ultrafast call: transcript + state + 3 images -> {actions: [{action, params, object, say, codex_prompt}]}."""
     import requests
     t0 = time.time()
     run = f"running now: {RUN['what']}" if RUN["p"] and RUN["p"].poll() is None else "nothing running"
@@ -496,25 +507,54 @@ def robot_errs(out):
     return re.findall(r"^ERR\s+(.*)$", out or "", re.M)
 
 
-def act(r, text, answered=False):
-    """Run the router's decision. Skills run as `along <skill>` processes (latest request wins; stop kills them).
-    answered = GPT-Live already replied itself (we routed it because it never handed off): only actions, no talk."""
-    a, side, say_done = r["action"], r.get("side") or "auto", (r.get("say") or "").strip()
-    if answered and a == "answer":
-        return event("sys", "GPT-Live already answered this itself: not saying it twice")
-    if a == "none":
+def act(plan, text, answered=False):
+    """Run the router's plan: its steps in order, each after the previous one succeeded (latest request wins: a newer plan
+    interrupts this one). answered = GPT-Live already replied itself (it never handed off): no extra talk."""
+    steps = [st for st in plan["actions"] if st["action"] != "none" and not (answered and st["action"] == "answer")]
+    if answered and any(st["action"] == "answer" for st in plan["actions"]):
+        event("sys", "GPT-Live already answered this itself: not saying it twice")
+    if not steps:
         return
+    if all(st["action"] == "answer" for st in steps):     # only talk: never interrupts what runs
+        return [say((st.get("say") or "").strip() or "Hm?") for st in steps]
+    PLAN["gen"] += 1; gen = PLAN["gen"]
+    if codex_agent.busy() or RUN["p"] and RUN["p"].poll() is None or BUSY.is_set():
+        interrupt_codex()                                   # a new request replaces whatever runs
+
+    def go():
+        BUSY.set(); done = []
+        try:
+            for i, st in enumerate(steps):
+                if PLAN["gen"] != gen:
+                    return event("sys", f"plan replaced by a newer request after {len(done)} of {len(steps)} steps")
+                if not do_step(st, text, done, steps[i + 1:], i == len(steps) - 1):
+                    return
+        finally:
+            if PLAN["gen"] == gen:
+                BUSY.clear()
+    threading.Thread(target=go, daemon=True).start()
+
+
+def do_step(r, text, done, rest, last):
+    """One plan step, blocking. True = go on with the next step. done: what earlier steps did (for Codex)."""
+    a, side, say_done = r["action"], r.get("side") or "auto", (r.get("say") or "").strip()
+    speak = say_done or ("Done." if last else "")
+
+    def say(t):                                           # what the person was told goes to Codex too
+        globals()["say"](t); done.append(f'Al told the person: "{t}"')
     if a == "answer":
-        return say(say_done or "Hm?")
+        say(say_done or "Hm?"); return True
     if a == "stop":
-        interrupt_codex(); return say(say_done or "Stopped.")
+        interrupt_codex(); say(say_done or "Stopped."); return True
     if a == "codex":
+        if done:                                          # the arms moved: fresh state for Codex
+            STATE.update(text=brief_state(rstep()), t=time.time())
         age = time.time() - STATE["t"]
         now = f"now: {STATE['text']}; snap_all.jpg {age:.0f} s old" if age < 30 else "arm state: run robot step"
-        return tell(f"[task] {r.get('codex_prompt') or text}   || heard: {text}; {now}; held {json.dumps(rd_held())}",
-                    fresh=bool(r.get("codex_fresh")))
-    if RUN["p"] and RUN["p"].poll() is None:               # a new action replaces the running one
-        interrupt_codex()
+        before = f"; already done for this request: {'; '.join(done)}" if done else ""
+        tell(f"[task] {r.get('codex_prompt') or text}   || heard: {text}{before}; {now}; held {json.dumps(rd_held())}",
+             fresh=bool(r.get("codex_fresh")), wait=True)
+        return True
     o = r.get("object")
     if a == "hold":
         if o:
@@ -528,7 +568,7 @@ def act(r, text, answered=False):
         args = [a, side] + ([str(r.get("deg") or 90)] if a != "release" else [])
     elif a == "press":
         if not o:
-            return say("Where should I press?")
+            say("Where should I press?"); return False
         from so101 import Robot
         h = (o.get("height_cm") or 0) / 100 - 0.02
         loc = Robot().locate(o["u"], o["v"], h)
@@ -539,42 +579,48 @@ def act(r, text, answered=False):
     elif a == "step":
         cmds = [c.strip() for c in (r.get("step") or "").split(";") if c.strip()]
         if not cmds or any(c.split()[0] not in ("goto", "move", "set", "recall", "nudge") for c in cmds):
-            return say("Hm, I can't do that one.")
+            say("Hm, I can't do that one."); return False
         args = None
-    def go():
-        BUSY.set()
-        try:
-            if args is None:
-                RUN.update(p=None, what="step"); out = ""
-                for c in cmds:                              # one robot step each: a ';' chain sums into one target
-                    o = rstep(c); out += o + "\n"
-                    if robot_errs(o):
-                        break
-                ok = bool(out.strip())
-            else:
-                p = subprocess.Popen([sys.executable, __file__, *args], cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                RUN.update(p=p, what="along " + " ".join(args)); out = p.communicate()[0]; ok = p.returncode == 0
-            killed = args is not None and p.returncode < 0
-            errs = robot_errs(out)
-            if errs and not killed:                        # refused by robotd: never report "Done."
-                event("skill", "refused: " + "; ".join(errs)[:240])   # fast path failed: say so, Codex thinks it through
-                say("Hm, tricky one, let me think.")
-                done = "along " + " ".join(args) if args else "robot step " + "; ".join(cmds)
-                return tell(f"[task] {text}   || The fast path tried `{done}` and robotd refused: {'; '.join(errs)}. Its position came "
-                            f"from one scene-camera guess (weak in x): re-estimate it yourself and do the task. Already said: "
-                            f"\"Hm, tricky one, let me think.\" {STATE['text'] and 'now: ' + STATE['text']}; held {json.dumps(rd_held())}")
-            event("skill", ("stopped: " if killed else "done: " if ok else "failed: ") + " ".join(out.split())[-240:])
-            if a == "hold":
-                if p.returncode < 0:                       # killed by stop / a newer request: say nothing
-                    return
-                say("Got it." if re.search(r"""['"]holding['"]: (True|true)""", out) else "Robot error." if "FAILED" in out else "Missed it.")
-            elif ok:
-                say(say_done or "Done.")
-            elif args is not None and p.returncode >= 0:
-                say("That didn't work.")
-        finally:
-            BUSY.clear()
-    threading.Thread(target=go, daemon=True).start()
+    else:
+        return True
+    what = "along " + " ".join(args) if args else "robot step " + "; ".join(cmds)
+    if args is None:
+        RUN.update(p=None, what="step"); out = ""
+        for c in cmds:                                    # one robot step each: a ';' chain sums into one target
+            g = c.split()
+            if g[0] == "goto" and len(g) == 5:            # coarse router guesses: the nearest point the arm really reaches
+                x, y, z = map(float, g[2:5]); rx, ry, rz = reachable(g[1], x, y, z)
+                if abs(rx - x) + abs(ry - y) + abs(rz - z) > 0.005:
+                    c = f"goto {g[1]} {rx:.3f} {ry:.3f} {rz:.3f}"; event("skill", f"{' '.join(g)} is past the arm's reach: {c}")
+            o_ = rstep(c); out += o_ + "\n"
+            if robot_errs(o_):
+                break
+        ok, killed = bool(out.strip()), False
+    else:
+        p = subprocess.Popen([sys.executable, __file__, *args], cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        RUN.update(p=p, what=what); out = p.communicate()[0]; ok, killed = p.returncode == 0, p.returncode < 0
+    if killed:                                            # stop / a newer request: say nothing, end the plan
+        event("skill", f"stopped: {what}"); return False
+    errs = robot_errs(out)
+    if errs:                                              # refused by robotd: never "Done."; Codex thinks it through
+        event("skill", "refused: " + "; ".join(errs)[:240])
+        say("Hm, tricky one, let me think.")
+        todo = "; then: " + "; ".join(x.get("codex_prompt") or x["action"] for x in rest) if rest else ""
+        tell(f"[task] {text}   || The fast path tried `{what}` and robotd refused: {'; '.join(errs)}{todo}. Its position came "
+             f"from one scene-camera guess (weak in x): re-estimate it yourself and do the task"
+             f"{' (already done: ' + '; '.join(done) + ')' if done else ''}. Already said: \"Hm, tricky one, let me think.\" "
+             f"{STATE['text'] and 'now: ' + STATE['text']}; held {json.dumps(rd_held())}", wait=True)
+        return False
+    event("skill", ("done: " if ok else "failed: ") + " ".join(out.split())[-240:])
+    if a == "hold":
+        if re.search(r"""['"]holding['"]: (True|true)""", out):
+            say(say_done or "Got it."); done.append(f"{what}: holding it"); return True
+        say("Robot error." if "FAILED" in out else "Missed it."); return False
+    if not ok:
+        say("That didn't work."); return False
+    if speak:
+        say(speak)
+    done.append(f"{what}: done"); return True
 
 
 def run_manual():
