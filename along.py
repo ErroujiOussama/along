@@ -257,6 +257,10 @@ class LiveVoice:
                 if reset_t() > t_start:                   # Reset Al: reconnect with an empty context
                     event("sys", "voice context cleared (Reset Al)"); break
                 e = json.loads(raw); k = e.get("type")
+                if isinstance(e.get("usage"), dict) or isinstance((e.get("response") or {}).get("usage"), dict):
+                    with open(f"{HERE}/.along_calls.jsonl", "a") as f_:   # GPT-Live's own cost: in the call log too
+                        f_.write(json.dumps({"id": f"live{time.time():.0f}", "t": time.time(), "kind": "live", "model": "gpt-live",
+                                             "usage": e.get("usage") or e["response"]["usage"]}) + "\n")
                 if k == "session.started" and not started:
                     started = True; self.phase = "listening"; log("live session", e["session"]["id"]); event("sys", "voice session up (GPT-Live)")
                     threading.Thread(target=pump_mic, daemon=True).start()
@@ -316,7 +320,7 @@ class LiveVoice:
 
 # ---------------------------------------------------------------- codex (slow path; see codex_agent.py)
 import codex_agent
-codex_agent.API_KEY = env("OPENAI_API_KEY")              # Codex on the API key: gpt-6.1-sol, fast tier
+codex_agent.API_KEY = env("OPENAI_API_KEY") if env("ALONG_CODEX_API") else None   # Codex: the ChatGPT subscription
 import llm
 llm.API_KEY = env("OPENAI_API_KEY")                       # every Responses call (router, skills, checks, looks)
 
@@ -726,6 +730,11 @@ def act(plan, text, answered=False):
         return
     if all(st["action"] == "answer" for st in steps):     # only talk: never interrupts what runs
         return [say(st["say"].strip()) for st in steps if (st.get("say") or "").strip()]   # "" = GPT-Live answered it
+    if (RUN["p"] and RUN["p"].poll() is None and RUN["what"].startswith("along hold")
+            and all(st["action"] in ("hold", "answer") or st["action"] == "step"
+                    and re.fullmatch(r"\s*set (left|right)_gripper 0\s*", st.get("step") or "") for st in steps)):
+        open(f"{HERE}/.along_grab", "w").close()          # "it's in": the waiting hold closes now and checks HOLDING itself
+        event("skill", "hold: told the object is in, closing"); return
     PLAN["gen"] += 1; gen = PLAN["gen"]
     if codex_agent.busy() or RUN["p"] and RUN["p"].poll() is None or BUSY.is_set():
         interrupt_codex()                                   # a new request replaces whatever runs
@@ -851,7 +860,7 @@ def confirm_episode():
         return
     import skills
     snap, used = skills.snapshot(), ", ".join(dict.fromkeys(EP["skills"])) or "none"
-    task = open(f"{HERE}/prompts/refine.md").read().format(used=used, index=skills.index_text())
+    task = open(f"{HERE}/prompts/refine.md").read().format(used=used, index=skills.index_text()) + "\n\n" + episode_log()
     event("refine", f"learning from \"{EP['request'][:120]}\" (skills used: {used})")
 
     def finished(reply):
@@ -872,7 +881,36 @@ def confirm_episode():
             json.dump(LEARN, open(LEARN_F, "w"))          # a restart before the answer undoes it (learn_pending)
             say(f"I'd remember this for next time: {summary.rstrip('.')}. Should I keep it?")
             t_ = LEARN["t"]; threading.Timer(LEARN_WAIT, lambda: LEARN.get("t") == t_ and learn_answer(None)).start()
-    codex_agent.fork(task, on_event=event, on_done=finished)
+    codex_agent.fork(task, on_event=event, on_done=lambda reply: threading.Thread(
+        target=finished_when_idle, args=(finished, reply), daemon=True).start(), fresh=True)
+
+
+def finished_when_idle(finished, reply, wait=300):
+    """Ask "keep it?" only when nothing runs (not in the middle of a hand-over); after `wait` s ask anyway."""
+    t0 = time.time()
+    while time.time() - t0 < wait and (BUSY.is_set() or codex_agent.busy() or RUN["p"] and RUN["p"].poll() is None):
+        time.sleep(1)
+    finished(reply)
+
+
+def episode_log(limit=6000):
+    """What happened in the confirmed episode, from the event log: the refine reads this, not the whole Codex thread."""
+    keep = ("heard", "route", "turn", "check", "skill", "tell", "codex", "say", "episode", "error")
+    try:
+        ev = [json.loads(l) for l in open(EVENTS).readlines()[-600:] if l.strip()]
+    except FileNotFoundError:
+        ev = []
+    lines = [f"{time.strftime('%H:%M:%S', time.localtime(e['t']))} {e['kind']}: {' '.join(str(e['text']).split())[:300]}"
+             for e in ev if e.get("t", 0) >= EP.get("t", 0) - 1 and e.get("kind") in keep]
+    text = "\n".join(lines)
+    import glob
+    th = codex_agent.state().get("thread") or ""
+    roll = (glob.glob(os.path.expanduser(f"~/.codex/sessions/*/*/*/rollout-*{th}.jsonl")) or [""])[0] if th else ""
+    t0 = time.strftime("%H:%M:%S", time.localtime(EP.get("t", 0)))
+    return (f"Episode log (request: \"{EP['request'][:200]}\"):\n" + (text[-limit:] if len(text) > limit else text) +
+            f"\n\nNeed a detail the log lacks (Codex's commands and their full output, its reasoning)? Search, don't read whole: "
+            f".along_codex.log (readable transcript of every Codex turn; this episode starts at {t0})"
+            + (f" and the raw Codex thread {roll}" if roll else "") + ".")
 
 
 LEARN = {}                                                # a learned skill change waiting for the person's yes / no
@@ -1061,6 +1099,9 @@ def do_step(r, text, done, last, cli=False):
         return False, f"`{what}`: {'robot error' if 'FAILED' in out else 'missed (nothing between the jaws)'}: " + " ".join(out.split())[-200:]
     if not ok:
         return False, f"`{what}` failed: " + " ".join(out.split())[-300:]
+    if args is None and any(re.fullmatch(r"set (left|right)_gripper 0", c) for c in cmds) and "HOLDING" not in out:
+        say("My jaws are closed, but there's nothing in them."); done.append(f"{what}: closed on nothing")
+        return True, None
     if speak:
         say(speak)
     done.append(f"{what}: done"); return True, None

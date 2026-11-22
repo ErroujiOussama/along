@@ -368,19 +368,36 @@ class Robot:
         def roi():
             g = cv2.cvtColor(self.thumb(side, 160, 90), cv2.COLOR_BGR2GRAY).astype(np.float32)
             return cv2.GaussianBlur(g[40:90, 60:130], (5, 5), 0)     # the jaw gap (object close = big change; background = small)
+        here = os.path.dirname(os.path.abspath(__file__)); grab_f = f"{here}/.along_grab"   # touched = "it's in": close now
+
+        def note(**k):                             # why it closed (or didn't): .along_offer.jsonl + the wrist frame
+            try:
+                with open(f"{here}/.along_offer.jsonl", "a") as f:
+                    f.write(json.dumps({"t": round(time.time(), 2), "side": side, **k}) + "\n")
+            except OSError:
+                pass
         while time.time() - t0 < timeout:
-            time.sleep(0.5); base = roi(); prev, still, entered = base, 0, False
+            time.sleep(0.5); base = roi(); prev, still, entered, peak, why = base, 0, False, 0.0, ""
+            t_wait, t_note = time.time(), time.time()
             while time.time() - t0 < timeout:
                 time.sleep(0.12); cur = roi()
                 d_base, d_prev = float(np.abs(cur - base).mean()), float(np.abs(cur - prev).mean())
-                prev = cur
+                prev = cur; peak = max(peak, d_base)
                 entered = entered or d_base > 25
-                still = still + 1 if entered and d_base > 18 and d_prev < 5 else 0
-                if still >= 6:                     # something new between the jaws, held still ~0.7 s
-                    break
+                still = still + 1 if entered and d_base > 18 and d_prev < 9 else 0   # a hand still holding it jitters
+                if time.time() - t_note > 2:
+                    note(d_base=round(d_base, 1), d_prev=round(d_prev, 1), peak=round(peak, 1), entered=entered); t_note = time.time()
+                if still >= 5:                     # something new between the jaws, held about still ~0.6 s
+                    why = "seen"; break
+                if os.path.exists(grab_f) and os.path.getmtime(grab_f) > t_wait:
+                    why = "told"; break            # the person said it is in
             else:
                 break
             tries += 1
+            try:
+                cv2.imwrite(f"{here}/snap_offer.jpg", self.thumb(side, 640, 360))
+            except Exception:
+                pass
             self.set({f"{side}_gripper": 0}, wait=False)
             g = [self.state()["measured"][f"{side}_gripper"]]
             for _ in range(25):                   # until the jaws stop
@@ -388,8 +405,13 @@ class Robot:
                 if len(g) > 4 and max(g[-4:]) - min(g[-4:]) < 0.5:
                     break
             seen = float(np.abs(roi() - base).mean())
-            if g[-1] >= 3.5 or seen > 18:          # thin things stop low: the object still in view counts too
+            ok = g[-1] >= 3.5 or seen > 18         # thin things stop low: the object still in view counts too
+            note(closed=why, gripper=round(g[-1], 1), seen=round(seen, 1), peak=round(peak, 1), holding=ok)
+            if ok:
                 return {"holding": True, "tries": tries, "gripper": round(g[-1], 1), "waited_s": round(time.time() - t0, 1)}
+            if why == "told":                      # told it was in, but empty: the caller says so and offers again
+                self.set({f"{side}_gripper": open_pct})
+                return {"holding": False, "tries": tries, "told": True, "waited_s": round(time.time() - t0, 1)}
             self.set({f"{side}_gripper": open_pct})   # closed on nothing: reopen, wait again
         return {"holding": False, "tries": tries, "waited_s": round(time.time() - t0, 1)}
 

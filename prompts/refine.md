@@ -1,4 +1,4 @@
-[refine] The episode above SUCCEEDED: the person confirmed it. Do not move the robot: no `robot`, no `along` commands
+[refine] The episode in the log below SUCCEEDED: the person confirmed it. Do not move the robot: no `robot`, no `along` commands
 that act (reading files is all you need). Your only job now: keep what this episode taught as a reusable skill, so next
 time the fast path does it in a few steps without you.
 

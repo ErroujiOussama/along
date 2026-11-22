@@ -26,13 +26,14 @@ API_KEY = None                                           # set by along: OpenAI 
 
 def flags():
     """codex exec flags shared by fresh and resumed turns (resume takes no -C: the process runs in HERE).
-    With API_KEY: the OpenAI API as provider (key via env, the global Codex login stays untouched), gpt-6.1-sol, low
-    reasoning, Codex's Fast mode (service tier priority; ultrafast is not in Codex's tier list for the model).
-    Without: the ChatGPT login and gpt-6.1-terra."""
+    Default: the ChatGPT login (the user's subscription, no API spend). With API_KEY (ALONG_CODEX_API=1): the OpenAI API
+    as provider (key via env, the global Codex login stays untouched). Both: gpt-6.1-sol, low reasoning, Codex's Fast
+    mode (service tier priority; ultrafast is not in Codex's tier list for the model)."""
     api = ["-c", 'model_providers.along_api={name="OpenAI API",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses"}',
-           "-c", "model_provider=along_api", "-c", f'service_tier="{os.environ.get("ALONG_CODEX_TIER", "priority")}"'] if API_KEY else []
+           "-c", "model_provider=along_api"] if API_KEY else []
+    api += ["-c", f'service_tier="{os.environ.get("ALONG_CODEX_TIER", "priority")}"']
     return ["--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", *api,
-            "-m", os.environ.get("ALONG_MODEL", "gpt-6.1-sol" if API_KEY else "gpt-6.1-terra"), "-c", "model_reasoning_effort=low",
+            "-m", os.environ.get("ALONG_MODEL", "gpt-6.1-sol"), "-c", "model_reasoning_effort=low",
             "-c", "project_doc_max_bytes=0", "-c", 'web_search="disabled"',      # no AGENTS.md (the brief has it), no web
             "-c", "developer_instructions=" + json.dumps(brief()),               # a JSON string is a valid TOML string
             *[x for f in ("hooks", "plugins", "apps", "multi_agent", "image_generation", "browser_use", "computer_use",
@@ -126,7 +127,8 @@ def run(task, fresh_ctx=False, on_event=lambda kind, text: None, on_reply=lambda
     if state().get("provider") != prov:                  # a thread lives with its provider: switching starts fresh
         _save(thread=None, provider=prov)
     thread = state()["thread"]
-    import llm; llm.spend("codex")
+    if API_KEY:
+        import llm; llm.spend("codex")
     cmd = ["codex", "exec", *(["resume"] if thread else []), *flags(), *([thread] if thread else []), "-"]
     p = subprocess.Popen(cmd, cwd=HERE, env={**os.environ, **({"OPENAI_API_KEY": API_KEY} if API_KEY else {})}, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(ERR, "w"),
                          text=True, start_new_session=True)       # own process group: interrupt kills it whole
@@ -217,20 +219,21 @@ def refining():
     return bool((state()["refine"] or {}).get("pid"))
 
 
-def fork(task, on_event=lambda kind, text: None, on_done=lambda reply: None, thread=None):
+def fork(task, on_event=lambda kind, text: None, on_done=lambda reply: None, thread=None, fresh=False):
     """Fork the current thread into a background `codex exec fork` turn (the skill refinement): it sees the whole
     episode, the main thread stays as it was. Its own process group and state key "refine"; a new main task does not
     kill it and interrupt() does not wait on it. Events go to .along_codex.log as "[refine] ...", on_event("codex"|"error",
     text) per command, on_done(final reply or "") at the end. None if there is no thread (or a refinement still runs),
     else the reader thread."""
-    s = state()
+    s = state()                                          # fresh: a new thread that gets only the task (small, fast)
     thread = thread or s["thread"]
-    if not thread or s.get("provider") != ("api" if API_KEY else "chatgpt"):
+    if not fresh and (not thread or s.get("provider") != ("api" if API_KEY else "chatgpt")):
         return None
     if refining():
         _log("[refine] skipped: the previous refinement still runs"); return None
-    import llm; llm.spend("codex fork")
-    cmd = ["codex", "exec", "fork", *flags(), thread, "-"]
+    if API_KEY:
+        import llm; llm.spend("codex fork")
+    cmd = ["codex", "exec", *flags(), "-"] if fresh else ["codex", "exec", "fork", *flags(), thread, "-"]
     p = subprocess.Popen(cmd, cwd=HERE, env={**os.environ, **({"OPENAI_API_KEY": API_KEY} if API_KEY else {})},
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(ERR + ".refine", "w"),
                          text=True, start_new_session=True)
@@ -239,7 +242,7 @@ def fork(task, on_event=lambda kind, text: None, on_done=lambda reply: None, thr
         st = state(); st["refine"] = {"pid": p.pid, "thread": None, "from": thread, "started": t0,
                                       "last": (st["refine"] or {}).get("last")}
         json.dump(st, open(STATE + ".tmp", "w")); os.replace(STATE + ".tmp", STATE)
-    _log(f"[refine] ── fork of {thread[:8]}: {task.splitlines()[0][:200]}")
+    _log(f"[refine] ── {'fresh' if fresh else 'fork of ' + thread[:8]}: {task.splitlines()[0][:200]}")
     p.stdin.write(task); p.stdin.close()
 
     def read():

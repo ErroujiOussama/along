@@ -34,3 +34,6 @@ position, an orientation or to check alignment after a move (compare it with the
 hold/release/turn/park. `along look "question"` = a second opinion from a context-free vision model, only when stuck.
 
 **State:** `along held <side> <what|none>` (hold/release do it for you).
+
+Never edit skills/ yourself (not even when asked to "remember" or "make it faster next time"): skills are written
+only by the learning step after the person confirms an episode. Say what you'd change instead.

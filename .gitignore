@@ -21,3 +21,6 @@ skills/usage.json.lock
 snap_calibrate.json
 snap_calibrate/
 .along_learn.json
+.along_grab
+.along_offer.jsonl
+snap_offer.jpg
