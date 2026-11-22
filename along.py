@@ -195,6 +195,8 @@ class LiveVoice:
                         self.speak_until = max(self.speak_until, time.time() + 0.6); self.phase = "muted"
                 elif k == "session.output_transcript.delta":
                     said += e["delta"]; self.said_t = time.time()
+                    if self.heard.strip() and not self.pend and not self.orphan and time.time() - self.utt_t < 4:
+                        self.orphan = time.time()             # it answered, so it was meant for Al: hand-off or we route it
                 elif k == "session.input_transcript.delta":
                     self.heard += e["delta"]; self.utt += e["delta"]; self.utt_t = time.time(); self.phase = "speech"
                 elif k == "session.delegation.created":         # carries no text: hand over what was heard, once it settles
@@ -631,8 +633,8 @@ def run_plan(steps, text, rid, gen, cli=False):
             skills_record(name, "use"); EP["skills"].append(name)
             event("skill", f"skill:{name} ({st.get('args') or 'no args'}){' inside ' + where if where else ''}")
             new = replan("skill", f"Expand skill:{name} (args: {st.get('args') or 'none'}; chain: "
-                         f"{' › '.join(chain + [name])}) into concrete steps for the current scene (fresh images below), "
-                         f"following its steps, checks and pitfalls. Your say lines are spoken.\n\nSKILL.md:\n{sk['body']}")
+                         f"{' › '.join(chain + [name])}) into concrete steps for the current scene (fresh images below): "
+                         f"plan them yourself from its goal, strategy and lessons. Your say lines are spoken.\n\nSKILL.md:\n{sk['body']}")
             if new is None:
                 return say("Hm, I'm stuck on this one.")
             stack.append({"skill": name, "steps": new, "failed": False}); continue
@@ -649,10 +651,13 @@ def run_plan(steps, text, rid, gen, cli=False):
                 print(f"skill needs the slow path here ({where}): {st.get('codex_prompt')}. Done: {'; '.join(done)}")
                 return False
             codex_ran = True; EP["codex"] = True
+            for f in stack:                               # the skills it ran inside did not manage it alone
+                if f["skill"] and not f["failed"]:
+                    f["failed"] = True; skills_record(f["skill"], "fail")
         ok, info = do_step(st, text, done, last, cli)
         if ok:
             continue
-        if info is None:                                  # stopped / replaced: say nothing more
+        if info is None or PLAN["gen"] != gen:            # stopped / replaced: say nothing more
             return False
         fr["failed"] = True
         if fr["skill"]:
@@ -766,7 +771,7 @@ def do_step(r, text, done, last, cli=False):
             o_ = rstep(c); out += o_ + "\n"
             if robot_errs(o_):
                 break
-        ok, killed = bool(out.strip()), False
+        ok, killed = bool(out.strip()), not out.strip()    # empty = the step was killed (stop / newer request)
     else:
         p = subprocess.Popen([sys.executable, __file__, *args], cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         RUN.update(p=p, what=what); out = p.communicate()[0]; ok, killed = p.returncode == 0, p.returncode < 0

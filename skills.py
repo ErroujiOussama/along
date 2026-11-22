@@ -1,4 +1,4 @@
-"""Al's learned skills: skills/<name>/SKILL.md (frontmatter + ## Steps / ## Checks / ## Pitfalls), stdlib only.
+"""Al's learned skills: skills/<name>/SKILL.md (frontmatter + ## Goal / ## Strategy / ## Success / ## Lessons), stdlib only.
 
 Frontmatter (between `---` lines, `key: value`): name, use_when (<= 90 chars, "Use when ..."), args (one line, e.g.
 "target: what to press; side: left|right|auto"), direct (true = run the steps as written, no model turn; default false).
@@ -34,7 +34,7 @@ BUILTINS = [
     {"name": "codex", "use_when": "Use for multi-step tasks, grasps from the table, anything else (the slow agent)",
      "args": "codex_prompt; codex_fresh"},
     {"name": "none", "use_when": "Use when the speech is not addressed to Al (chatter, other conversations)", "args": ""},
-    {"name": "skill", "use_when": "Use when a learned skill fits: skill:<name> runs its SKILL.md steps (nests <= 3 deep)",
+    {"name": "skill", "use_when": "Use when a learned skill fits: skill:<name> plans from its SKILL.md (nests <= 3 deep)",
      "args": "the skill's own args"},
 ]
 

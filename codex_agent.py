@@ -216,14 +216,14 @@ def refining():
     return bool((state()["refine"] or {}).get("pid"))
 
 
-def fork(task, on_event=lambda kind, text: None, on_done=lambda reply: None):
+def fork(task, on_event=lambda kind, text: None, on_done=lambda reply: None, thread=None):
     """Fork the current thread into a background `codex exec fork` turn (the skill refinement): it sees the whole
     episode, the main thread stays as it was. Its own process group and state key "refine"; a new main task does not
     kill it and interrupt() does not wait on it. Events go to .along_codex.log as "[refine] ...", on_event("codex"|"error",
     text) per command, on_done(final reply or "") at the end. None if there is no thread (or a refinement still runs),
     else the reader thread."""
     s = state()
-    thread = s["thread"]
+    thread = thread or s["thread"]
     if not thread or s.get("provider") != ("api" if API_KEY else "chatgpt"):
         return None
     if refining():
