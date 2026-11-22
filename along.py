@@ -1376,6 +1376,7 @@ def skill(a):
 def main():
     a = sys.argv[1:] or ["help"]
     if a[0] == "run":
+        learn_pending()
         run() if "--yolo" in a else run_manual()
     elif a[0] == "attach":                                # watch / type into the Codex session
         th = codex_agent.state()["thread"]
