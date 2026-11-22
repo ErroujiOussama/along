@@ -60,8 +60,21 @@ def event(kind, text=""):
 
 
 # ---------------------------------------------------------------- speech
+def _norm(t):
+    return re.sub(r"[^a-z0-9 ]", "", (t or "").lower()).strip()
+
+
 def say(text):
-    """GPT-Live is the only voice: while a session is up it speaks this; otherwise it is only logged."""
+    """GPT-Live is the only voice: while a session is up it speaks this; otherwise it is only logged.
+    Skipped if GPT-Live itself just said the same ("You're welcome." twice)."""
+    try:
+        recent_live = [json.loads(l) for l in open(EVENTS).readlines()[-15:] if l.strip()]
+    except FileNotFoundError:
+        recent_live = []
+    n = _norm(text)
+    if n and any(e["kind"] == "live" and time.time() - e["t"] < 8 and (n in _norm(e["text"]) or _norm(e["text"]) in n)
+                 and len(_norm(e["text"])) > 3 for e in recent_live):
+        return event("sys", f"not repeating what Al just said: {text}")
     event("say", text)
     if os.path.exists(f"{HERE}/.along_live"):
         with open(f"{HERE}/.along_live_out.jsonl", "a") as f:
@@ -489,7 +502,8 @@ Actions:
   a turn with new images and return the corrected / remaining steps. Use it where precision matters, before the risky step.
 - skill: a learned skill (list below): skill = its name, args = the values its args line asks for (free text). You
   then get a turn with its SKILL.md and return its concrete steps.
-- answer: only talk: questions about the scene, the arms, greetings. say = the answer.
+- answer: only talk: questions about the scene, the arms. say = the answer. Greetings, thanks and small talk: say = ""
+  (the voice model already answers those itself; saying it again doubles it).
 - codex: anything multi-step, a grasp of something on the table, or a task none of the above covers: codex_prompt = a
   self-contained instruction for the slower agent with all you know (object, where it is in px, which arm).
   codex_fresh = true when the task has nothing to do with what Codex did recently (it then starts from a clean session,
@@ -503,7 +517,7 @@ correct it in say when it told the person something wrong.
 
 episode = how the request relates to the open episode (the goal being worked on, given in the context): "new" (a new
 goal, or none is open), "continue" (same goal: retry, a correction, "now the other arm"), "confirm" (the person says it
-worked: "yes", "perfect", "thanks, that worked"; answer e.g. "Great!"), "deny" (it didn't: "no", "you missed"; then
+worked: "yes", "perfect", "thanks, that worked"; say "": the voice model answers thanks and small talk itself), "deny" (it didn't: "no", "you missed"; then
 fix it, usually codex continuing), "none" (chatter, questions, small talk). In later turns of the conversation: "continue".
 
 say = what Al says when that step is done: ONE short sentence ("Done.", "Here you go.", an answer of at most ~12 words), or
@@ -537,7 +551,8 @@ ROUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["e
 
 RUN = {"p": None, "what": ""}                               # the skill process the router started (stop kills it)
 PLAN = {"gen": 0}                                           # bumped by every new plan: an older sequence stops at its next step
-MAX_TURNS, MAX_DEPTH = 8, 3                                 # model turns per request; skills inside skills
+MAX_TURNS, MAX_DEPTH = 8, 3
+HEARD = {"t": 0.0}                                           # when the last request was heard                                 # model turns per request; skills inside skills
 EP = {"id": None, "request": "", "status": "", "codex": False, "skills": []}   # the episode: one goal until confirmed/dropped
 
 
@@ -647,7 +662,7 @@ def act(plan, text, answered=False):
     if not steps:
         return
     if all(st["action"] == "answer" for st in steps):     # only talk: never interrupts what runs
-        return [say((st.get("say") or "").strip() or "Hm?") for st in steps]
+        return [say(st["say"].strip()) for st in steps if (st.get("say") or "").strip()]   # "" = GPT-Live answered it
     PLAN["gen"] += 1; gen = PLAN["gen"]
     if codex_agent.busy() or RUN["p"] and RUN["p"].poll() is None or BUSY.is_set():
         interrupt_codex()                                   # a new request replaces whatever runs
@@ -674,8 +689,18 @@ def run_plan(steps, text, rid, gen, cli=False):
         nonlocal rid, turns
         turns += 1
         if turns > MAX_TURNS:
-            event("sys", f"{MAX_TURNS} model turns for one request: giving up"); return None
+            event("sys", f"{MAX_TURNS} model turns for one request: giving up")
+            for f in stack:
+                if f["skill"] and not f["failed"]:
+                    f["failed"] = True; skills_record(f["skill"], "fail")
+            return None
+        t0 = time.time()
         new, rid = turn(kind, f"{msg}\n\nDone so far: {'; '.join(done) or 'nothing'}.", rid)
+        if new and HEARD["t"] > t0:                       # the person spoke meanwhile: that request answers itself,
+            stale = [st for st in new if st["action"] == "answer"]   # this turn's talk is out of date
+            if stale:
+                event("sys", "dropped (the person spoke meanwhile): " + " / ".join(st.get("say") or "" for st in stale))
+            new = [st for st in new if st["action"] != "answer"]
         return new
 
     while stack:
@@ -730,9 +755,6 @@ def run_plan(steps, text, rid, gen, cli=False):
             continue
         if info is None or PLAN["gen"] != gen:            # stopped / replaced: say nothing more
             return False
-        fr["failed"] = True
-        if fr["skill"]:
-            skills_record(fr["skill"], "fail")
         event("skill", f"failed{' in skill:' + where if where else ''}: {info[:240]}")
         new = replan("fail", f"Step failed{' in skill:' + where if where else ''}: {summary([st])} "
                      f"{json.dumps({k: v for k, v in st.items() if v not in (None, '')})}\nWhy: {info}\n"
@@ -874,7 +896,7 @@ def run_manual():
 
     def heard(text, answered=False):
         nonlocal last_voice
-        last_voice = time.time()
+        last_voice = HEARD["t"] = time.time()
         age = time.time() - STATE["t"]
         ctx = f"   || now: {STATE['text']}; held {json.dumps(rd_held())}; snap_all.jpg {age:.0f} s old" if age < 6 else ""
         if env("ALONG_ROUTER", "1") != "0":
@@ -1142,6 +1164,7 @@ def skill(a):
         far = abs(rx - x) + abs(ry - y) > 0.03                         # beyond the arm (often: held out too far)
         if far or rz < z + 0.04:
             event("skill", f"press: {x:.2f}/{y:+.2f}/{z:.2f} past the arm's reach, pressing at {rx:.2f}/{ry:+.2f} from {rz:.2f}")
+        from so101 import Robot
         tip = getattr(Robot(), side).tip()
         near = sum((a - b) ** 2 for a, b in zip(tip, (rx, ry, rz))) ** 0.5 < 0.02   # already there: a goto < 2 cm is refused
         o = rstep(f"set {side}_gripper 0" + ("" if near else f"; goto {side} {rx:.3f} {ry:.3f} {rz:.3f}")); print(o)
