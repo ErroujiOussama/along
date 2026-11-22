@@ -483,8 +483,10 @@ def watch(mic):
 ROUTE_PROMPT = """You are Al's brain and hands: you drive two SO-101 robot arms (left = white, right = orange) on a lab table
 yourself, step by step, from the camera images, until each request is done. A voice model talks to people and hands you each request (speech-to-text: may be garbled or carry room chatter
 before it; act on the last thing said to Al). You get the camera images, the arm state and the recent conversation.
-Return actions = the steps in order: usually one; a sequence when the request needs several ("hold this and turn it" =
-hold, turn; "take it and put it in the cup" = hold, codex). Each step starts when the previous one succeeded.
+First plan: what the goal is, where the target is (scene pixel + height, or only in a wrist view), which arm reaches it,
+and the whole sequence that gets it done. target = that point (u, v, height_cm in the scene image) or null; Al checks
+it is in reach before anything moves. Then actions = all the steps of the plan in order ("hold this and turn it" = hold,
+turn). Each step starts when the previous one succeeded.
 This is a conversation: later turns of it may give you (a) a learned skill's SKILL.md to expand into concrete steps,
 (b) a check: fresh images and a question, (c) a failed step and why. Each time return the steps from that point on
 (after a failure: a corrected retry, or a say). You see the images and the scene camera is calibrated: do tasks
@@ -513,7 +515,7 @@ Actions:
   A target a little past the arm's reach goes to the nearest point it reaches; one > 4 cm past it fails (then use the
   other arm, or ask the person to bring it closer). Pick the arm nearer to the object (image-left = orange/right).
 - check: question = what to verify in fresh images (e.g. "is the orange tip right above the pump head?"); you then get
-  a turn with new images and return the corrected / remaining steps. Use it where precision matters, before the risky step.
+  a turn with new images and return the corrected / remaining steps. At most one per plan, before the step that needs precision.
 - skill: a learned skill (list below): skill = its name, args = the values its args line asks for (free text). You
   then get a turn with its SKILL.md and return its concrete steps.
 - answer: only talk: questions about the scene, the arms. say = the answer. Greetings, thanks and small talk: a short reply,
@@ -560,8 +562,12 @@ STEP_SCHEMA = {"type": "object", "additionalProperties": False,
         "skill": {"type": ["string", "null"]}, "args": {"type": ["string", "null"]}, "question": {"type": ["string", "null"]},
         "say": {"type": "string"}, "codex_prompt": {"type": ["string", "null"]}, "codex_fresh": {"type": ["boolean", "null"]}}}
 
-ROUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["episode", "actions"],
-                "properties": {"episode": {"type": "string", "enum": ["new", "continue", "confirm", "deny", "none"]},
+ROUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["plan", "target", "episode", "actions"],
+                "properties": {"plan": {"type": "string"},
+                               "target": {"anyOf": [{"type": "null"}, {"type": "object", "additionalProperties": False,
+                                   "required": ["u", "v", "height_cm"], "properties": {"u": {"type": "number"},
+                                   "v": {"type": "number"}, "height_cm": {"type": "number"}}}]},
+                               "episode": {"type": "string", "enum": ["new", "continue", "confirm", "deny", "none"]},
                                "actions": {"type": "array", "items": STEP_SCHEMA}}}
 
 RUN = {"p": None, "what": ""}                               # the skill process the router started (stop kills it)
@@ -644,7 +650,7 @@ def route(text):
            f"\n\nRecent conversation:\n{conv}\n\nRecent activity (router/turn = you, tell = task sent to Codex, codex = its "
            f"commands and turns):\n{acts}")
     out, rid = llm.call("route", [ctx] + frames(), instructions=route_prompt(), schema=ROUTE_SCHEMA, timeout=30)
-    event("route", f"({time.time() - t0:.1f} s) {out['episode']}: {summary(out['actions'])} "
+    event("route", f"({time.time() - t0:.1f} s) {out['episode']}: {summary(out['actions'])} | plan: {out['plan']} | "
           + json.dumps([{k: v for k, v in s.items() if v not in (None, "")} for s in out["actions"]]))
     return {**out, "_rid": rid}
 
@@ -656,7 +662,7 @@ def turn(kind, msg, rid):
     out, rid = llm.call(kind, [f"{msg}\n\nArm state now: {STATE['text']}; held {json.dumps(rd_held())}."] + frames(),
                         instructions=route_prompt(), schema=ROUTE_SCHEMA, prev=rid, episode=EP["id"], timeout=30)
     steps = [s for s in out["actions"] if s["action"] != "none"]
-    event("turn", f"{kind} ({time.time() - t0:.1f} s): {summary(steps)} "
+    event("turn", f"{kind} ({time.time() - t0:.1f} s): {summary(steps)} | plan: {out['plan']} | "
           + json.dumps([{k: v for k, v in s.items() if v not in (None, "")} for s in steps]))
     return steps, rid
 
@@ -724,6 +730,12 @@ def act(plan, text, answered=False):
                     and re.fullmatch(r"\s*set (left|right)_gripper 0\s*", st.get("step") or "") for st in steps)):
         open(f"{HERE}/.along_grab", "w").close()          # "it's in": the waiting hold closes now and checks HOLDING itself
         event("skill", "hold: told the object is in, closing"); return
+    t = plan.get("target")
+    if t and any(st["action"] not in ("answer", "check") for st in steps):   # feasibility: the target in reach of an arm?
+        from so101 import Robot
+        loc = Robot().locate(t["u"], t["v"], t["height_cm"] / 100 - 0.02)
+        if min(geo_off(*loc[sd]) for sd in ("left", "right")) > 0.04:
+            event("skill", f"target {loc} is out of both arms' reach"); return say("That's out of my reach. Can you bring it closer?")
     PLAN["gen"] += 1; gen = PLAN["gen"]
     if codex_agent.busy() or RUN["p"] and RUN["p"].poll() is None or BUSY.is_set():
         interrupt_codex()                                   # a new request replaces whatever runs
