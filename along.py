@@ -496,8 +496,9 @@ Actions:
   person names, else "auto" (nearer arm). what = the object ("toothbrush"). object = where it is now in the scene image
   (if visible; else null and the arm goes to a default spot).
 - release: side opens and goes back to ready (drops what it holds).
-- turn: side's gripper rolls about the direction it points by deg (90 = quarter turn): + turns the top of what it
-  holds toward image-right in the scene image, - toward image-left. tilt: only the gripper pivots at the wrist by deg:
+- turn: side's gripper rolls about the direction it points by deg (90 = quarter turn): + = clockwise seen from
+  behind the gripper (from above when it points down); pointing at a person or the scene camera, + turns the top of
+  what it holds toward image-left in the scene image, - toward image-right. tilt: only the gripper pivots at the wrist by deg:
   + points it further down, - further up. The jaw tips are ~15 cm from that pivot, so they swing: tilting 90 from
   pointing forward to pointing down drops them ~15 cm and pulls them ~15 cm back.
 - press: side's closed jaws go 5 cm above a point, a check looks whether they are right above it, then they push down
@@ -1057,8 +1058,8 @@ def skill(a):
     elif cmd == "release":                          # along release <side>
         print(rstep(f"set {side}_gripper 45")); time.sleep(1.0); set_held(side, "none")
         print(rstep(f"recall ready {side}"))
-    elif cmd == "turn":                             # along turn <side> <deg>   (wrist roll, + / -)
-        print(rstep(f"move {side}_wrist_roll {float(a[2])}"))
+    elif cmd == "turn":                             # along turn <side> <deg>   (+ = clockwise seen from behind the gripper;
+        print(rstep(f"move {side}_wrist_roll {-float(a[2])}"))   # the joint's + is counter-clockwise)
     elif cmd == "tilt":                             # along tilt <side> <deg>   (wrist flex, + tips down)
         print(rstep(f"move {side}_wrist_flex {float(a[2])}"))
     elif cmd == "open":                             # along open [side]: that gripper (no side: both, dashboard) opens
