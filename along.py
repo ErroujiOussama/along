@@ -668,8 +668,9 @@ def do_step(r, text, done, rest, last):
         if re.search(r"""['"]holding['"]: (True|true)""", out):
             say(say_done or "Got it."); done.append(f"{what}: holding it"); return True
         say("Robot error." if "FAILED" in out else "Missed it."); return False
-    if not ok:
-        say("That didn't work."); return False
+    if not ok:                                            # a skill may name the reason for the person: "SAY: ..."
+        m = re.search(r"^SAY: (.+)$", out, re.M)
+        say(m.group(1).strip() if m else "That didn't work."); return False
     if speak:
         say(speak)
     done.append(f"{what}: done"); return True
@@ -946,6 +947,7 @@ def skill(a):
         x, y, z = map(float, a[2:5]); depth = float(a[5]) / 100 if len(a) > 5 else 0.04
         rx, ry, rz = reachable(side, x, y, z + 0.04, drop=0.03)       # approach >= 1 cm above the point
         if abs(rx - x) + abs(ry - y) > 0.03:                           # beyond the arm: not beside it
+            print("SAY: That's out of my reach. Can you bring it closer?")
             sys.exit(f"press {side} FAILED: {x:.2f}/{y:+.2f}/{z:.2f} is out of the {side} arm's reach")
         if rz < z + 0.04:
             event("skill", f"press: {x:.2f}/{y:+.2f}/{z:.2f} past the arm's reach, pressing at {rx:.2f}/{ry:+.2f} from {rz:.2f}")
