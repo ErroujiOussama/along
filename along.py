@@ -903,7 +903,9 @@ def skill(a):
         far = abs(rx - x) + abs(ry - y) > 0.03                         # beyond the arm (often: held out too far)
         if far or rz < z + 0.04:
             event("skill", f"press: {x:.2f}/{y:+.2f}/{z:.2f} past the arm's reach, pressing at {rx:.2f}/{ry:+.2f} from {rz:.2f}")
-        o = rstep(f"set {side}_gripper 0; goto {side} {rx:.3f} {ry:.3f} {rz:.3f}"); print(o)
+        tip = getattr(Robot(), side).tip()
+        near = sum((a - b) ** 2 for a, b in zip(tip, (rx, ry, rz))) ** 0.5 < 0.02   # already there: a goto < 2 cm is refused
+        o = rstep(f"set {side}_gripper 0" + ("" if near else f"; goto {side} {rx:.3f} {ry:.3f} {rz:.3f}")); print(o)
         if robot_errs(o):
             sys.exit(f"press {side} FAILED: {'; '.join(robot_errs(o))}")
         if far:                                     # a moment at our limit: the person can bring it under the gripper

@@ -122,8 +122,38 @@ def run(task, fresh_ctx=False, on_event=lambda kind, text: None, on_reply=lambda
     _log(f"── task ({'resume ' + thread[:8] if thread else 'new thread'}): {task}")
     p.stdin.write(task); p.stdin.close()
 
+    def views(tid, stop):
+        """`codex exec --json` emits nothing for view_image: follow the rollout file to log the images Codex opens."""
+        import glob, re
+        f = None
+        while not stop.is_set() and f is None:
+            m = glob.glob(os.path.expanduser(f"~/.codex/sessions/*/*/*/rollout-*{tid}.jsonl"))
+            f = open(m[0]) if m else None
+            if f is None:
+                time.sleep(0.2)
+        if f is None:
+            return
+        f.seek(0, 2)
+        while True:
+            ln = f.readline()
+            if not ln:
+                if stop.is_set():
+                    break
+                time.sleep(0.2); continue
+            if "view_image" not in ln:
+                continue
+            try:
+                code = str((json.loads(ln).get("payload") or {}).get("input") or "")
+            except ValueError:
+                continue
+            for path in re.findall(r"view_image\(\{\s*path\s*:\s*[\"']([^\"']+)", code):
+                _log("👁 " + os.path.basename(path)); on_event("codex", "views " + os.path.basename(path))
+
     def read():
         reply, done = "", False
+        stop = threading.Event()
+        if thread:
+            threading.Thread(target=views, args=(thread, stop), daemon=True).start()
         for ln in p.stdout:
             try:
                 e = json.loads(ln)
@@ -132,6 +162,7 @@ def run(task, fresh_ctx=False, on_event=lambda kind, text: None, on_reply=lambda
             ty, it = e.get("type"), e.get("item") or {}
             if ty == "thread.started" and e.get("thread_id") != thread:
                 _save(thread=e["thread_id"])
+                threading.Thread(target=views, args=(e["thread_id"], stop), daemon=True).start()
             elif ty == "item.started" and it.get("type") == "command_execution":
                 c = it.get("command", "")
                 c = c[len("/bin/bash -lc "):].strip("'") if c.startswith("/bin/bash -lc ") else c
@@ -146,7 +177,7 @@ def run(task, fresh_ctx=False, on_event=lambda kind, text: None, on_reply=lambda
             elif ty in ("turn.failed", "error"):
                 msg = (e.get("error") or {}).get("message") or e.get("message") or ln
                 _log("error: " + str(msg)); on_event("error", f"codex: {str(msg)[:300]}")
-        p.wait()
+        p.wait(); time.sleep(0.3); stop.set()               # let the tailer read the last lines
         secs = time.time() - t0
         with _locked():                                  # only clear the pid if it is still ours (not a newer turn)
             s = state()

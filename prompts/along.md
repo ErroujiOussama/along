@@ -29,7 +29,8 @@ talk about safety. Unclear = do the most likely thing. No exploring files, no re
 
 **Positions:** metres in each arm's base frame: x forward, y to the arm's left, z up; table z = -0.02. A point in the
 scene image (800x450, the large bottom tile of snap_all.jpg; the camera faces the arms: right/orange arm on image-left)
--> `robot locate u v z` (z = the height you know it is at). Look at snap_all.jpg only when you need a position or an
-orientation; skip it for hold/release/turn/park. `along look "question"` = a second vision model when unsure.
+-> `robot locate u v z` (z = the height you know it is at). Open snap_all.jpg yourself (view_image) when you need a
+position, an orientation or to check alignment after a move (compare it with the tip xyz the step printed); skip it for
+hold/release/turn/park. `along look "question"` = a second opinion from a context-free vision model, only when stuck.
 
 **State:** `along held <side> <what|none>` (hold/release do it for you).
