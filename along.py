@@ -219,7 +219,7 @@ class LiveVoice:
                     if not self.pend and self.heard.strip():  # GPT-Live answered ("Sure.") but never delegated
                         event("sys", "GPT-Live did not hand this off: routing it ourselves")
                         req, self.heard, self.routed_t = " ".join(self.heard.split())[-400:], "", time.time()
-                        threading.Thread(target=self.on_text, args=(req,), daemon=True).start()
+                        threading.Thread(target=self.on_text, args=(req,), kwargs={"answered": True}, daemon=True).start()
                 if time.time() > self.speak_until + 0.3:
                     if self.phase == "muted":
                         self.phase = "listening"
@@ -490,9 +490,17 @@ def route(text):
     return out
 
 
-def act(r, text):
-    """Run the router's decision. Skills run as `along <skill>` processes (latest request wins; stop kills them)."""
+def robot_errs(out):
+    """`robot step` reports refused commands (unreachable, outside the safe box, creeping) as ERR lines, exit code 0."""
+    return re.findall(r"^ERR\s+(.*)$", out or "", re.M)
+
+
+def act(r, text, answered=False):
+    """Run the router's decision. Skills run as `along <skill>` processes (latest request wins; stop kills them).
+    answered = GPT-Live already replied itself (we routed it because it never handed off): only actions, no talk."""
     a, side, say_done = r["action"], r.get("side") or "auto", (r.get("say") or "").strip()
+    if answered and a == "answer":
+        return event("sys", "GPT-Live already answered this itself: not saying it twice")
     if a == "none":
         return
     if a == "answer":
@@ -538,12 +546,22 @@ def act(r, text):
             if args is None:
                 RUN.update(p=None, what="step"); out = ""
                 for c in cmds:                              # one robot step each: a ';' chain sums into one target
-                    out = rstep(c)
-                ok = bool(out)
+                    o = rstep(c); out += o + "\n"
+                    if robot_errs(o):
+                        break
+                ok = bool(out.strip())
             else:
                 p = subprocess.Popen([sys.executable, __file__, *args], cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 RUN.update(p=p, what="along " + " ".join(args)); out = p.communicate()[0]; ok = p.returncode == 0
             killed = args is not None and p.returncode < 0
+            errs = robot_errs(out)
+            if errs and not killed:                        # refused by robotd: never report "Done."
+                event("skill", "refused: " + "; ".join(errs)[:240])   # fast path failed: say so, Codex thinks it through
+                say("Hm, tricky one, let me think.")
+                done = "along " + " ".join(args) if args else "robot step " + "; ".join(cmds)
+                return tell(f"[task] {text}   || The fast path tried `{done}` and robotd refused: {'; '.join(errs)}. Its position came "
+                            f"from one scene-camera guess (weak in x): re-estimate it yourself and do the task. Already said: "
+                            f"\"Hm, tricky one, let me think.\" {STATE['text'] and 'now: ' + STATE['text']}; held {json.dumps(rd_held())}")
             event("skill", ("stopped: " if killed else "done: " if ok else "failed: ") + " ".join(out.split())[-240:])
             if a == "hold":
                 if p.returncode < 0:                       # killed by stop / a newer request: say nothing
@@ -562,14 +580,14 @@ def run_manual():
     """Manual on/off (`along on` / `along off`, or the page buttons) instead of the scene detector."""
     on, last_voice = False, 0.0
 
-    def heard(text):
+    def heard(text, answered=False):
         nonlocal last_voice
         last_voice = time.time()
         age = time.time() - STATE["t"]
         ctx = f"   || now: {STATE['text']}; held {json.dumps(rd_held())}; snap_all.jpg {age:.0f} s old" if age < 6 else ""
         if env("ALONG_ROUTER", "1") != "0":
             try:
-                return act(route(text), text)
+                return act(route(text), text, answered)
             except Exception as e:
                 log("router failed", e); event("error", f"router: {e}; Codex takes it")
         tell(f"[voice] {text}{ctx}")
@@ -821,8 +839,10 @@ def skill(a):
         print(rstep(f"move {side}_wrist_flex {float(a[2])}"))
     elif cmd == "press":                            # along press <side> x y z [depth_cm]: push straight down on (x,y,z)
         x, y, z = map(float, a[2:5]); depth = float(a[5]) / 100 if len(a) > 5 else 0.04
-        print(rstep(f"set {side}_gripper 0; goto {side} {x} {y} {z + 0.04:.3f}"))
-        print(rstep(f"goto {side} {x} {y} {z - depth:.3f}"))      # aims below the surface: the servos push
+        for c in (f"set {side}_gripper 0; goto {side} {x} {y} {z + 0.04:.3f}", f"goto {side} {x} {y} {z - depth:.3f}"):
+            o = rstep(c); print(o)                  # (2nd aims below the surface: the servos push)
+            if robot_errs(o):
+                sys.exit(f"press {side} FAILED: {'; '.join(robot_errs(o))}")
         time.sleep(0.8)
         print(rstep(f"goto {side} {x} {y} {z + 0.05:.3f}"))
     elif cmd == "open":                             # along open: both grippers open, nothing held (dashboard button)
