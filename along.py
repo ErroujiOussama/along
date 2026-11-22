@@ -58,7 +58,8 @@ def log(*a):
 
 
 def event(kind, text=""):
-    """kind: wake idle heard say tell error. Shared by the daemon and `along say` (called by Codex)."""
+    """kind: wake idle heard say live error (conversation) | tell codex look seen aim skill held sys (activity panel).
+    Written by the daemon and by the skill processes Codex runs; the dashboard shows both."""
     with open(EVENTS, "a") as f:
         f.write(json.dumps({"t": round(time.time(), 2), "kind": kind, "text": text}) + "\n")
 
@@ -190,7 +191,7 @@ class LiveVoice:
                     break
                 e = json.loads(raw); k = e.get("type")
                 if k == "session.started" and not started:
-                    started = True; self.phase = "listening"; log("live session", e["session"]["id"])
+                    started = True; self.phase = "listening"; log("live session", e["session"]["id"]); event("sys", "voice session up (GPT-Live)")
                     threading.Thread(target=pump_mic, daemon=True).start()
                     threading.Thread(target=pump_out, daemon=True).start()
                 elif k == "session.output_audio.delta":
@@ -206,6 +207,7 @@ class LiveVoice:
                     if self.utt.strip():
                         event("heard", self.utt.strip()); self.utt = ""
                     self.deleg, req, self.heard, self.phase = e["delegation"]["id"], " ".join(self.heard.split())[-400:], "", "listening"
+                    event("sys", "GPT-Live delegated the last request to Codex")
                     self.on_text(req or "(inaudible)")
                 elif k == "error":
                     log("live:", e); event("error", f"live: {e.get('error', e)}")
@@ -222,7 +224,7 @@ class LiveVoice:
                 self.send(type="session.close"); ws.close()
             except Exception:
                 pass
-            mic.kill(); spk.stdin.close(); spk.kill(); log("live session closed")
+            mic.kill(); spk.stdin.close(); spk.kill(); log("live session closed"); event("sys", "voice session closed")
 
 # ---------------------------------------------------------------- codex bridge
 def tmux(*a, **k):
@@ -236,7 +238,7 @@ def codex_up():
     """Start the one Codex session (once; it stays up across idle/active, auto-compacts) and wait until it has read the brief."""
     if tmux("has-session", "-t", TMUX).returncode == 0:
         return
-    log("starting Codex in tmux session", TMUX)
+    log("starting Codex in tmux session", TMUX); event("sys", "starting Codex (reading its brief)")
     tmux("new-session", "-d", "-s", TMUX, "-x", "200", "-y", "50", "-c", HERE,
          *CODEX, open(f"{HERE}/prompts/along.md").read() + "\n\nReply \"ready\" now and end your turn; requests arrive as new turns.")
     t0, last = time.time(), ""
@@ -246,7 +248,7 @@ def codex_up():
         if scr == last and "Worked for" in scr or time.time() - t0 > 90:
             break
         last = scr
-    log("Codex ready")
+    log("Codex ready"); event("sys", f"Codex ready ({time.time() - t0:.0f} s)")
 
 
 def interrupt_codex():
@@ -254,7 +256,7 @@ def interrupt_codex():
     tmux("send-keys", "-t", TMUX, "Escape"); time.sleep(0.3)
     tmux("send-keys", "-t", TMUX, "-l", "/stop"); time.sleep(0.2); tmux("send-keys", "-t", TMUX, "Enter")
     subprocess.run(["pkill", "-f", r"^\S*python\S* \S*(along\.py (hold|release|turn|tilt|press|look)|robot\.py (offer|step))"], capture_output=True)
-    BUSY.clear()
+    BUSY.clear(); event("sys", "Codex interrupted (running turn and skills stopped)")
 
 
 def tell_lock_up():
@@ -419,12 +421,35 @@ def relay_replies():
                 if f'"cwd":"{HERE}"' not in fh.readline():
                     continue
                 for ln in fh:
+                    if '"custom_tool_call' in ln or '"function_call' in ln or '"turn_aborted"' in ln:
+                        p = json.loads(ln).get("payload", {}); cid = p.get("call_id") or p.get("turn_id")
+                        key = (p.get("type"), cid)
+                        if key in done:
+                            continue
+                        done.add(key)
+                        if first:
+                            continue
+                        if p.get("type") in ("custom_tool_call", "function_call"):
+                            src = p.get("input") or p.get("arguments") or ""
+                            cmds = [json.loads('"' + c + '"') for c in re.findall(r'\bcmd"?\s*:\s*"((?:[^"\\]|\\.)*)"', src)]
+                            event("codex", "$ " + " ; ".join(cmds) if cmds else f"{p.get('name')}: {src[:200]}")
+                        elif p.get("type") == "turn_aborted":
+                            event("codex", "turn stopped")
+                        else:
+                            out = p.get("output")
+                            if isinstance(out, list):
+                                out = " ".join(o.get("text", "") for o in out if isinstance(o, dict))
+                            out = re.sub(r"Script completed\s*Wall time ([\d.]+) seconds\s*Output:", r"(\1 s)", str(out or ""))
+                            event("codex", "→ " + " ".join(out.split())[:300])
+                        continue
                     if '"task_complete"' not in ln:
                         continue
                     p = json.loads(ln).get("payload", {}); tid = p.get("turn_id")
                     if tid in done:
                         continue
                     done.add(tid); msg = (p.get("last_agent_message") or "").strip(); BUSY.clear()
+                    if not first:
+                        event("codex", f"turn done in {(p.get('duration_ms') or 0) / 1000:.1f} s (first token {(p.get('time_to_first_token_ms') or 0) / 1000:.1f} s)")
                     if not first and msg and msg.lower().strip(".") != "ready":
                         say(msg[:400])
         first = False; time.sleep(0.3)
@@ -440,6 +465,7 @@ def run_manual():
         age = time.time() - STATE["t"]
         ctx = f"   || now: {STATE['text']}; held {json.dumps(rd_held())}; snap_all.jpg {age:.0f} s old" if age < 6 else ""
         if re.search(r"\b(hold|take|grab|catch|hand|halt|nimm|greif|fang)", text, re.I):
+            event("aim", "sounds like a hand-over: looking where the object is (prefetch)")
             threading.Thread(target=aim_seen, daemon=True).start()   # where it is held out: ready before Al asks
         BUSY.set(); tell(f"[voice] {text}{ctx}")
     if not env("OPENAI_API_KEY"):
@@ -464,7 +490,8 @@ def run_manual():
                 threading.Thread(target=tell_lock_up, daemon=True).start()
         json.dump({"t": t, "active": on, "why": ["switched on"] if on else [], "manual": True, "listening": mic.on.is_set(),
                    "mic": mic.phase, "vad": round(mic.prob, 2), "stt": mic.stt_busy, "reply_open": spoke_left(), "speaking": muted(),
-                   "voice": "GPT-Live", "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice}, open(SEEN, "w"))
+                   "voice": "GPT-Live", "all": [], "new": [], "held": rd_held(), "hits": [], "last_voice": last_voice,
+                   "busy": BUSY.is_set(), "state_t": STATE["t"], "state": STATE["text"]}, open(SEEN, "w"))
         time.sleep(0.2)
 
 
@@ -538,7 +565,8 @@ def look(question, cams=("scene", "left", "right")):
              "robot arms from the front: orange (right arm) on image-left, white (left arm) on image-right; left/right "
              "wrist cameras look out of each gripper between its jaws. Give pixel coordinates in the scene image when "
              "you mention where something is. Answer briefly and concretely.\n\nQuestion: " + question)
-    event("look", question)
+    t0, model = time.time(), env("ALONG_LOOK_MODEL", "gpt-6.1-sol" if env("OPENAI_API_KEY") else "gpt-6.1-terra")
+    event("look", f"[{model}{' ' + env('ALONG_LOOK_TIER', 'ultrafast') if env('OPENAI_API_KEY') else ''} · {', '.join(cams)}] {question}")
     if env("OPENAI_API_KEY"):                              # lean: just the images + question
         import base64, requests
         content = [{"type": "input_text", "text": brief}] + [
@@ -555,7 +583,7 @@ def look(question, cams=("scene", "left", "right")):
                             "-c", "model_reasoning_effort=low", "-o", f"{d}/answer.txt", "-i", *imgs],
                            input=brief, capture_output=True, text=True, timeout=120, cwd=d)
         ans = open(f"{d}/answer.txt").read().strip() if os.path.exists(f"{d}/answer.txt") else r.stdout.strip()[-2000:]
-    event("seen", ans)
+    event("seen", f"({time.time() - t0:.1f} s) {ans}")
     return ans
 
 
@@ -609,7 +637,9 @@ def aim(side, what, roll):
         while j.get("pending") and time.time() - j["t"] < 10:      # the daemon's prefetch is still looking
             time.sleep(0.2); j = json.load(open(AIM))
         if j.get("pending") or time.time() - j.get("t", 0) > 15:
-            j = aim_seen(what)
+            event("aim", "no fresh prefetched look: looking now"); j = aim_seen(what)
+        else:
+            event("aim", f"using the prefetched look ({time.time() - j['t']:.0f} s old)")
         if j.get("u") is None:
             raise ValueError("nothing held out")
         h = min(max(float(j.get("height_cm") or 15) / 100, 0.03), 0.35)
@@ -621,9 +651,12 @@ def aim(side, what, roll):
         r = math.hypot(ox, oy); ux, uy = ox / r, oy / r
         r = min(max(r - 0.03, 0.28), 0.36)
         roll = 90 if j.get("pose") == "flat" else roll
-        return side, round(ux * r, 3), round(uy * r, 3), round(min(max(oz, 0.10), 0.20), 3), roll
+        out = side, round(ux * r, 3), round(uy * r, 3), round(min(max(oz, 0.10), 0.20), 3), roll
+        event("aim", f"object at px {j['u']},{j['v']} ({j.get('pose', '?')}, {h * 100:.0f} cm up) = {side} arm {ox:.2f}/{oy:+.2f}/{oz:.2f} m"
+                     f" -> reach to {out[1]:.2f}/{out[2]:+.2f}/{out[3]:.2f}, roll {roll}")
+        return out
     except Exception as e:
-        log("aim: default spot,", e)
+        log("aim: default spot,", e); event("aim", f"default spot instead ({e})")
         side = side if side in ("left", "right") else ("right" if "left" in rd_held() else "left")
         return side, *HOLD_AT[side], roll
 
@@ -634,6 +667,7 @@ def skill(a):
     if cmd == "hold" and (len(a) < 2 or a[1] not in ("left", "right")):
         a = [a[0], "auto", *a[1:]]                  # along hold [what]: the arm nearer to the object
     side = a[1] if len(a) > 1 else ""
+    event("skill", "along " + " ".join(a))
     if side and side not in ("left", "right", "auto"):
         sys.exit("side = left | right")
     if cmd == "hold":                               # along hold <side> [what] [flat] [x y z]
@@ -646,6 +680,7 @@ def skill(a):
         else:                                       # aim: one coarse move toward what the person holds out, turned to match
             side, x, y, z, roll = aim(side, what, roll)
         print(f"offer {side} at {x:.3f} {y:.3f} {z:.3f} roll {roll}")
+        event("skill", f"hold: {side} arm reaches out to {x:.2f}/{y:+.2f}/{z:.2f}, roll {roll}, jaws open; waits for the object")
         for attempt in (1, 2):
             ask = threading.Timer(4.0, say, args=("Ready, put it between my jaws.",)) if attempt == 1 else None
             ask and ask.start()                     # only if it is not already in there (offer closes once it sits still)
@@ -653,11 +688,14 @@ def skill(a):
             ask and ask.cancel()
             if "unreachable" in (o.stderr + o.stdout) and (x, y, z) != HOLD_AT[side]:
                 x, y, z = HOLD_AT[side]                 # aimed out of reach: the default spot instead
+                event("skill", "hold: aimed point out of reach, default spot instead")
                 o = subprocess.run(["robot", "offer", side, *map(str, HOLD_AT[side]), str(roll)], capture_output=True, text=True)
             try:
                 r = json.loads(o.stdout)
             except ValueError:                      # robotd down etc.: not a miss, say what broke
+                event("error", f"hold {side}: robot error {(o.stderr or o.stdout).strip()[-200:]}")
                 sys.exit(f"hold {side} FAILED (robot error, not a miss): {(o.stderr or o.stdout).strip()[-300:]}")
+            event("skill", f"hold {side}: {'holding' if r.get('holding') else 'missed'} {json.dumps(r)[:200]}")
             if r.get("holding"):
                 set_held(side, what); break
             if attempt == 1:

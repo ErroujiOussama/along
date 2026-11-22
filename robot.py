@@ -134,7 +134,7 @@ def along_api(h, u):
     if u.path == "/along.json":
         ev = []
         if os.path.exists(f"{here}/.along_events.jsonl"):
-            ev = [json.loads(l) for l in open(f"{here}/.along_events.jsonl").readlines()[-300:] if l.strip()]
+            ev = [json.loads(l) for l in open(f"{here}/.along_events.jsonl").readlines()[-800:] if l.strip()]
         pane = subprocess.run(["tmux", "-L", "default", "capture-pane", "-p", "-t", "along", "-S", "-60"], capture_output=True, text=True)
         daemon = subprocess.run(["pgrep", "-f", "along.py run"], capture_output=True).returncode == 0
         arms = {}
