@@ -48,7 +48,7 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,360px) 
 .ph h2{margin:0;font-size:13px;color:#fff;font-weight:600} .ph .sub{color:var(--dim);font-size:12px;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ph .tab{padding:4px 8px}
 .scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
-#p-scene,#p-skills,#p-raw{grid-column:3;grid-row:1} #p-chat{grid-column:1;grid-row:1} #p-tl{grid-column:2;grid-row:1}
+#p-scene,#p-raw{grid-column:3;grid-row:1} #p-chat{grid-column:1;grid-row:1} #p-tl{grid-column:2;grid-row:1}
 .side{display:none} .side.show{display:flex}
 @media (max-width:1099px){
  #top{grid-template-columns:auto minmax(0,1fr);}
@@ -142,17 +142,17 @@ th{color:var(--dim);font-weight:normal} tr.new td:first-child{color:var(--ok)}
 </style></head><body>
 <div id="top">
  <div id="pill" class="off"><b>…</b><small></small><div class="vad"><i style="width:0"></i></div></div>
- <div id="now" title="click: show this episode in the timeline"><div class="l1"><span class="rq">…</span></div><div class="l2"></div></div>
+ <div id="now" title="click: show this request in the timeline"><div class="l1"><span class="rq">…</span></div><div class="l2"></div></div>
  <div id="arms"></div>
  <div id="ctl">
   <div class="seg" title="voice session"><button id="on">ON</button><button id="off">OFF</button></div>
   <button class="btn" id="open" title="open both grippers">Release grips</button>
-  <button class="btn reseta" id="fresh" title="Al forgets everything: Codex, router history, episode and the voice conversation (arms stay put)">Reset Al</button>
+  <button class="btn reseta" id="fresh" title="Al forgets everything: Codex, router history and the voice conversation (arms stay put)">Reset Al</button>
   <button class="btn danger" id="reset" title="stop Al, open both grippers, move both arms to rest">Reset arms</button>
   <span class="links"><a href="/">cameras</a><a href="/inspect">inspector</a></span>
  </div>
 </div>
-<nav id="tabs"><button class="tab" data-tab="chat">Chat</button><button class="tab" data-tab="tl">Timeline</button><button class="tab" data-tab="scene">Scene</button><button class="tab" data-tab="skills">Actions</button><button class="tab" data-tab="raw">Raw log</button></nav>
+<nav id="tabs"><button class="tab" data-tab="chat">Chat</button><button class="tab" data-tab="tl">Timeline</button><button class="tab" data-tab="scene">Scene</button><button class="tab" data-tab="raw">Raw log</button></nav>
 <main>
  <section class="pane" id="p-chat">
   <div class="ph"><h2>Conversation</h2><span class="sub" id="chatsub">person ↔ Al</span></div>
@@ -160,11 +160,11 @@ th{color:var(--dim);font-weight:normal} tr.new td:first-child{color:var(--ok)}
   <form id="say"><input id="txt" placeholder="Type as if spoken to Al…" autocomplete="off"><button class="btn" data-cmd="voice" title="handled exactly like speech">Send</button><button class="btn" data-cmd="say" title="Al speaks this text">Speak</button></form>
  </section>
  <section class="pane" id="p-tl">
-  <div class="ph"><h2>Why did it do that?</h2><span class="sub" id="tlsub">episodes: router → skills → checks → Codex → outcome · click a row for the exact model call</span></div>
+  <div class="ph"><h2>Why did it do that?</h2><span class="sub" id="tlsub">requests: router → steps → Codex · click a row for the exact model call</span></div>
   <div class="scroll" id="tlsc"><div id="tl"></div></div>
  </section>
  <section class="pane side" id="p-scene">
-  <div class="ph sidetabs"><button class="tab" data-side="scene">Scene</button><button class="tab" data-side="skills">Actions</button><button class="tab" data-side="raw">Raw log</button></div>
+  <div class="ph sidetabs"><button class="tab" data-side="scene">Scene</button><button class="tab" data-side="raw">Raw log</button></div>
   <div class="scroll"><div id="scenebox">
    <img id="scene" alt="scene camera with detection boxes">
    <div class="legend" id="legend"><i style="color:#3cdc3c">green</i> new (wakes it) · <i style="color:#e6aa3c">orange</i> known · <i style="color:#c83cc8">magenta</i> on an arm (ignored) · <i style="color:#3cc8e6">cyan</i> wake zone · <i style="color:#888">grey</i> idle baseline</div>
@@ -173,13 +173,8 @@ th{color:var(--dim);font-weight:normal} tr.new td:first-child{color:var(--ok)}
     <div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" id="wake">Force wake</button><button class="btn sm" id="idle" title="clear the table first">Store idle baseline</button></div></div>
   </div></div>
  </section>
- <section class="pane side" id="p-skills">
-  <div class="ph sidetabs"><button class="tab" data-side="scene">Scene</button><button class="tab" data-side="skills">Actions</button><button class="tab" data-side="raw">Raw log</button></div>
-  <div class="ph"><h2>Actions</h2><span class="sub" id="skstat"></span></div>
-  <div class="scroll"><div id="skills"></div></div>
- </section>
  <section class="pane side" id="p-raw">
-  <div class="ph sidetabs"><button class="tab" data-side="scene">Scene</button><button class="tab" data-side="skills">Actions</button><button class="tab" data-side="raw">Raw log</button></div>
+  <div class="ph sidetabs"><button class="tab" data-side="scene">Scene</button><button class="tab" data-side="raw">Raw log</button></div>
   <div class="ph"><span class="seg"><button id="rw-codex" class="on">Codex log</button><button id="rw-ev">All events</button></span><input id="rawfilter" placeholder="filter" style="margin-left:auto"></div>
   <div class="scroll" id="rawsc"><pre id="rawlog"></pre><div id="rawev" hidden></div></div>
  </section>
@@ -219,7 +214,7 @@ const narrowQ = matchMedia('(max-width:1099px)');
 let tab = 'tl', side = 'scene';
 try { tab = localStorage.getItem('al.tab') || tab; side = localStorage.getItem('al.side') || side; } catch (e) {}
 function layout() {
-  const panes = {chat: 'p-chat', tl: 'p-tl', scene: 'p-scene', skills: 'p-skills', raw: 'p-raw'};
+  const panes = {chat: 'p-chat', tl: 'p-tl', scene: 'p-scene', raw: 'p-raw'};
   for (const [k, id] of Object.entries(panes)) {
     const show = narrowQ.matches ? k === tab : (k === 'chat' || k === 'tl' || k === side);
     $(id).classList.toggle('show', show);
@@ -230,7 +225,7 @@ function layout() {
   for (const sc of [$('chatsc'), $('tlsc')]) sc.scrollTop = 1e9;
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-tab]'); if (t) { tab = t.dataset.tab; if (['scene', 'skills', 'raw'].includes(tab)) side = tab; layout(); }
+  const t = e.target.closest('[data-tab]'); if (t) { tab = t.dataset.tab; if (['scene', 'raw'].includes(tab)) side = tab; layout(); }
   const s = e.target.closest('[data-side]'); if (s) { side = s.dataset.side; layout(); }
 });
 narrowQ.addEventListener('change', layout);
@@ -326,7 +321,7 @@ function buildCards(events, calls) {
     const k = e.kind, x = e.text || '';
     if (['live', 'wake', 'idle', 'ignored'].includes(k)) continue;
     if (k === 'sys' && SKIP_SYS.test(x)) continue;
-    if (k === 'sys' && /^Al reset:/.test(x)) { if (cur) push(cur, e, {k: 'status', tag: 'reset', html: '↺ Al reset: this episode is forgotten'}); cur = null; pendHeard = []; continue; }
+    if (k === 'sys' && /^Al reset:/.test(x)) { if (cur) push(cur, e, {k: 'status', tag: 'reset', html: '↺ Al reset: forgotten'}); cur = null; pendHeard = []; continue; }
     if (k === 'held' && (x === '{}' || !x)) continue;
     if (k === 'heard') { pendHeard.push(e); pendHeard = pendHeard.filter(h => e.t - h.t < 25); continue; }
     if (k === 'episode') {
@@ -456,7 +451,7 @@ function renderTimeline() {
   });
   if (!cards.length) items.push({key: 'empty', cls: 'empty', html: 'No activity logged yet.'});
   reconcile($('tl'), items);
-  $('tlsub').textContent = `${cards.length} episodes · click a header to fold, a row for the exact model call`;
+  $('tlsub').textContent = `${cards.length} requests · click a header to fold, a row for the exact model call`;
   if (stick) sc.scrollTop = 1e9;
 }
 $('tl').addEventListener('click', e => {
@@ -484,7 +479,7 @@ function renderChat() {
     else if (k === 'live' || k === 'say') { who = 'al'; html = `<div class="bub">${esc(x)}</div>`; if (k === 'say' && now() - e.t < 15) who = 'al pend'; }
     else if (k === 'ignored') { who = 'chatter'; html = `<div class="bub" title="room chatter: not addressed to Al (click to expand)">${esc(x)}</div>`; }
     else if (k === 'wake' || k === 'idle') { items.push({key, cls: 'chat-sys', html: `<span>${k === 'wake' ? 'Al on' : 'Al off'} · ${esc(x || (k === 'wake' ? 'woke' : 'idle'))} · ${hmm(e.t)}</span>`}); prevWho = null; return; }
-    else if (k === 'sys' && RST.test(x)) { items.push({key, cls: 'chat-sys reset', html: `<span>↺ Al reset · Codex, router, episode and voice forgot everything above · ${hmm(e.t)}</span>`}); prevWho = null; return; }
+    else if (k === 'sys' && RST.test(x)) { items.push({key, cls: 'chat-sys reset', html: `<span>↺ Al reset · Codex, router and voice forgot everything above · ${hmm(e.t)}</span>`}); prevWho = null; return; }
     else if (k === 'error') { items.push({key, cls: 'chat-sys err', html: `<span>${esc(x)} · ${hmm(e.t)}</span>`}); prevWho = null; return; }
     else return;
     const base = who.split(' ')[0], showWho = base !== prevWho || e.t - prevT > 60;
@@ -520,7 +515,7 @@ function renderTop() {
   } else if (c) {
     const st = c.status || (c.id ? 'open' : '');
     l1 = `${st ? `<span class="st ${esc(st)}">${esc(st)}</span>` : ''}<span class="rq">${esc(cardTitle(c))}</span><span class="st">${ago(c.t1)} ago</span>`;
-  } else l1 = '<span class="rq" style="color:var(--dim)">no episode yet</span>';
+  } else l1 = '<span class="rq" style="color:var(--dim)">no request yet</span>';
   if (working) {
     const lastCmd = [...d.events].reverse().find(e => e.kind === 'codex' && e.text.startsWith('$ '));
     l2 = `<span class="cx">Codex working${cx.started ? ' ' + dur(d.now - cx.started) : ''}</span>${lastCmd ? ' · <code>' + esc(lastCmd.text.slice(2, 140)) + '</code>' : ''}`;
@@ -580,44 +575,6 @@ function renderRaw(force) {
   if (stick) sc.scrollTop = 1e9;
 }
 
-// ---------- skills / actions ----------
-const openSk = new Set(); let skSig = '', skData = null;
-function stats(s) {
-  if (!s) return '';
-  const last = Math.max(s.last_patch || 0, s.created || 0);
-  return `${s.uses ?? 0} uses · <span class="w">✓ ${s.wins ?? 0}</span> <span class="f">✗ ${s.fails ?? 0}</span> · ${s.patches ?? 0} patches${last ? ' · changed ' + ago(last) + ' ago' : ''}${s.last_used ? ' · used ' + ago(s.last_used) + ' ago' : ''}`;
-}
-const argsTxt = a => !a ? '' : typeof a === 'string' ? a : Array.isArray(a) ? a.map(x => typeof x === 'string' ? x : x.name || JSON.stringify(x)).join(', ') : Object.keys(a).join(', ');
-function renderSkills(d) {
-  if (d.error) { $('skills').innerHTML = `<div class="empty">skills unavailable: ${esc(d.error)}</div>`; return; }
-  let h = `<div class="grp-h">learned (${(d.skills || []).length})</div>`;
-  for (const s of d.skills || []) {
-    const op = openSk.has(s.name);
-    h += `<div class="sk learned"><div class="hd" data-sk="${esc(s.name)}"><span class="nm">${op ? '▾' : '▸'} ${esc(s.name)}</span><span class="tag">learned</span>${s.direct ? '<span class="tag d">direct</span>' : ''}
-      <div class="uw">${esc(s.use_when || '')}</div>${s.args ? `<div class="ar">${esc(argsTxt(s.args))}</div>` : ''}<div class="ss">${stats(s.stats)}</div></div>`
-      + (op ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px"><span class="ss" style="margin:0">${esc(s.path || '')} · ${(s.history || []).length} snapshots</span><button class="btn sm" data-undo="${esc(s.name)}" ${(s.history || []).length ? '' : 'disabled'}>Undo last change</button></div><pre>${esc(s.body || '')}</pre>` : '') + '</div>';
-  }
-  if (!(d.skills || []).length) h += '<div class="empty" style="padding:8px">none yet: a confirmed episode creates one</div>';
-  h += `<div class="grp-h">built-in (${(d.builtins || []).length})</div>`;
-  h += (d.builtins || []).map(b => `<div class="sk"><span class="nm">${esc(b.name)}</span><div class="uw">${esc(b.use_when || '')}</div>${b.args ? `<div class="ar">${esc(argsTxt(b.args))}</div>` : ''}</div>`).join('');
-  $('skills').innerHTML = h;
-  $('skstat').textContent = `${(d.builtins || []).length} built-in · ${(d.skills || []).length} learned`;
-}
-$('skills').onclick = e => {
-  const u = e.target.closest('[data-undo]');
-  if (u) { if (confirm(`Undo the last change to skill "${u.dataset.undo}"?`)) doit('skill-undo', u.dataset.undo).then(() => setTimeout(pollSkills, 800, true)); return; }
-  const r = e.target.closest('[data-sk]'); if (!r) return;
-  const n = r.dataset.sk; openSk.has(n) ? openSk.delete(n) : openSk.add(n);
-  if (skData) renderSkills(skData);
-};
-async function pollSkills(once) {
-  try {
-    const t = await (await fetch('/along/skills.json', {cache: 'no-store'})).text();
-    if (t !== skSig) { skSig = t; skData = JSON.parse(t); renderSkills(skData); }
-  } catch (e) { $('skills').innerHTML = '<div class="empty">skills: unavailable</div>'; skSig = ''; }
-  if (!once) setTimeout(pollSkills, 5000);
-}
-
 // ---------- polling ----------
 async function poll() {
   try {
@@ -639,7 +596,7 @@ async function pollCalls() {
   setTimeout(pollCalls, 3000);
 }
 setInterval(() => { if (D) renderTimeline(); }, 15000);   // refresh "x min ago"
-poll(); pollCalls(); pollSkills();
+poll(); pollCalls();
 
 // ---------- controls ----------
 $('say').onsubmit = e => { e.preventDefault(); const t = $('txt').value.trim(), c = e.submitter?.dataset.cmd || 'voice';

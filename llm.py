@@ -1,8 +1,8 @@
-"""Every OpenAI Responses call Al makes (router turns, skill turns, checks, looks) goes through call(): one place for the
+"""Every OpenAI Responses call Al makes (router, looks) goes through call(): one place for the
 request, and a log of the exact input/output for the dashboard.
 
 .along_calls.jsonl, one line per call:
-  {"id", "t", "kind": "route"|"skill"|"fail"|"check"|"look"|..., "episode", "model", "tier", "prev" (previous_response_id
+  {"id", "t", "kind": "route"|"look", "episode", "model", "tier", "prev" (previous_response_id
    or null), "resp" (this response id), "secs", "usage": {"input", "cached", "output"}, "instructions" (text, or "=<id>"
    = same as that earlier call), "input": [{"text": ...} | {"image": "<file in .along_calls/>", "label": ...}],
    "output": parsed JSON (schema calls) or text, "error": null or text}
@@ -117,15 +117,8 @@ def _append(rec):
                     os.remove(f"{IMGS}/{fn}")
 
 
-def tag(resp, episode):
-    """File a call under an episode after the fact (the router call decides which episode it belongs to)."""
-    with _lock:
-        with open(LOG, "a") as f:
-            f.write(json.dumps({"tag": resp, "episode": episode}) + "\n")
-
-
 def calls(n=100, episode=None):
-    """The newest n logged calls (for the dashboard), oldest first; tag lines applied."""
+    """The newest n logged calls (for the dashboard), oldest first."""
     try:
         lines = [json.loads(l) for l in open(LOG).readlines() if l.strip()]
     except FileNotFoundError:

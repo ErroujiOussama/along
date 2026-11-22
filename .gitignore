@@ -16,11 +16,5 @@ scan.jpg
 along_idle.json
 along_idle_bg.npy
 .along_held.json
-skills/usage.json
-skills/usage.json.lock
 snap_calibrate.json
 snap_calibrate/
-.along_learn.json
-.along_grab
-.along_offer.jsonl
-snap_offer.jpg

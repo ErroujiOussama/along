@@ -124,8 +124,8 @@ def _caps(qd):
 
 def along_api(h, u):
     """Debug page for the along voice helper: /along, /along.json (state, detections, history, Codex state + turn log),
-    /along/scene.jpg (scene camera with the detector's boxes), /along/do?cmd=tell|say|wake|idle|skill-undo&text=...,
-    /along/skills.json (skills.listing()), /along/calls.json?n=60[&sig=] (llm.calls + episode states from the events;
+    /along/scene.jpg (scene camera with the detector's boxes), /along/do?cmd=tell|say|wake|idle&text=...,
+    /along/calls.json?n=60[&sig=] (llm.calls + episode states from the events;
     {"same": true} when sig is unchanged), /along/calls/<id>_<n>.jpg (images sent with those calls)"""
     import subprocess
     from urllib.parse import parse_qsl
@@ -179,19 +179,6 @@ def along_api(h, u):
             cv2.putText(img, txt, (d["box"][0], max(14, d["box"][1] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3)
             cv2.putText(img, txt, (d["box"][0], max(14, d["box"][1] - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1)
         return send(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes(), "image/jpeg")
-    if u.path == "/along/skills.json":                                     # actions table: built-ins + learned skills
-        try:
-            import importlib
-            sk = sys.modules.get("skills")
-            if sk is None:
-                import skills as sk
-            elif os.path.getmtime(sk.__file__) != getattr(sk, "_dash_mtime", None):
-                sk = importlib.reload(sk)                                    # dashboard runs for days: pick up edits
-            sk._dash_mtime = os.path.getmtime(sk.__file__)
-            out = sk.listing()
-        except Exception as e:
-            out = {"error": f"{type(e).__name__}: {e}"}
-        return send(json.dumps(out, default=str).encode(), "application/json")
     if u.path == "/along/calls.json":                                      # model calls (llm.py log) + episode states
         q = dict(parse_qsl(u.query))
         try:
@@ -237,10 +224,8 @@ def along_api(h, u):
         h.send_header("Content-Length", str(len(body))); h.end_headers(); h.wfile.write(body); return
     if u.path == "/along/do":
         q = dict(parse_qsl(u.query)); cmd = q.get("cmd", "")
-        if cmd not in ("tell", "say", "wake", "idle", "on", "off", "open", "reset", "fresh", "skill-undo"):
+        if cmd not in ("tell", "say", "wake", "idle", "on", "off", "open", "reset", "fresh"):
             return send(b'{"error": "cmd?"}', "application/json")
-        if cmd == "skill-undo" and not q.get("text"):
-            return send(b'{"error": "skill-undo needs text=<skill name>"}', "application/json")
         args = [f"{here}/.venv/bin/python", f"{here}/along.py", cmd] + ([q["text"]] if q.get("text") else [])
         subprocess.Popen(args, cwd=here, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return send(json.dumps({"started": cmd}).encode(), "application/json")
