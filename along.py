@@ -21,6 +21,7 @@ Skills (one call per request; each ends with a robot step: state lines + snap_al
   along release <side>   open, then recall ready
   along turn <side> <deg> | along tilt <side> <deg>   wrist roll | wrist flex (+ tips down)
   along press <side> x y z [cm]   push straight down on a point (pump, button), default 4 cm past it, back up
+  along open [side]      that gripper opens, arm stays (no side: both)
   along park             arms holding nothing -> rest
 Debug page: `robot stream` -> http://localhost:8101/along (boxes, state, conversation, Codex pane, type-as-voice).
 Key: OPENAI_API_KEY in the environment or in .env (repo). Optional ALONG_MIC (pw source; default the C920 mic).
@@ -495,8 +496,10 @@ Actions:
   (if visible; else null and the arm goes to a default spot).
 - release: side opens and goes back to ready (drops what it holds).
 - turn: wrist roll of side by deg (+/-; 90 = quarter turn). tilt: wrist flex by deg (+ tips down).
-- press: push straight down on a point (button, pump): object = that point, depth_cm (default 4, harder 6-8).
-- open: both grippers open (let go of everything). park: empty arms go to rest. reset: everything stops, both arms to rest.
+- press: side's closed gripper goes 4 cm above a point (button, pump top), pushes depth_cm past it (default 4, harder
+  6-8) and comes back up. object = that point; side = the arm that reaches it.
+- open: side's gripper opens (lets go), the arm stays. park: empty arms go to rest. reset: everything stops, both arms
+  to rest.
 - stop: stop whatever is running now, arms stay where they are ("stop", "wait", "halt", "no").
 - step: a short direct move sequence for robot step, ';'-chained: goto <side> x y z (m, that arm's base frame: x forward,
   y to the arm's left, z up, table z -0.02; >= 2 cm), move <side>_<joint> <deg> (relative, >= 5), set <side>_gripper
@@ -669,11 +672,13 @@ def do_step(r, text, done, rest, last):
         if not o:
             return "press needs object = the point to press (scene pixel + height)"
         from so101 import Robot
-        h = o["height_cm"] / 100 - 0.02
-        loc = Robot().locate(o["u"], o["v"], h)
-        side = side if side in ("left", "right") else min(("left", "right"), key=lambda sd: loc[sd][0] ** 2 + loc[sd][1] ** 2)
+        if side not in ("left", "right"):
+            return "press needs side = left or right"
+        loc = Robot().locate(o["u"], o["v"], o["height_cm"] / 100 - 0.02)
         args = ["press", side, *(f"{v:.3f}" for v in loc[side]), str(r.get("depth_cm") or 4)]
-    elif a in ("open", "park", "reset"):
+    elif a == "open":
+        args = [a] + ([side] if side in ("left", "right") else [])
+    elif a in ("park", "reset"):
         args = [a]
     elif a == "step":
         cmds = [c.strip() for c in (r.get("step") or "").split(";") if c.strip()]
@@ -916,21 +921,6 @@ def aim(side, what, roll):
         return side, *HOLD_AT[side], roll
 
 
-def reachable(side, x, y, z, drop=0.06):
-    """(x, y, z), or the nearest point the arm really reaches (IK within 1.5 cm, inside robotd's box): up to `drop` lower,
-    then 1 cm at a time closer to the arm base."""
-    from so101 import Robot
-    arm = getattr(Robot(), side)
-    z = min(max(z, 0.0), 0.25)
-    for k in range(30):                              # shrink the horizontal distance 1 cm at a time, then go lower
-        r = (x * x + y * y) ** 0.5; f = max(0.0, r - 0.01 * k) / r
-        px, py = min(x * f, 0.38), max(min(y * f, 0.2), -0.2)
-        for pz in [z - d / 100 for d in range(0, int(drop * 100) + 1)]:
-            if px >= 0.08 and pz >= 0.0 and arm.ik(px, py, pz)["error_m"] < 0.015:
-                return px, py, pz
-    return x, y, z
-
-
 def skill(a):
     """along hold|release|turn|press|park ...: whole requests in one call, no questions asked."""
     cmd = a[0]
@@ -980,11 +970,7 @@ def skill(a):
         print(rstep(f"move {side}_wrist_flex {float(a[2])}"))
     elif cmd == "press":                            # along press <side> x y z [depth_cm]: push straight down on (x,y,z)
         x, y, z = map(float, a[2:5]); depth = float(a[5]) / 100 if len(a) > 5 else 0.04
-        rx, ry, rz = reachable(side, x, y, z + 0.04, drop=0.03)       # approach >= 1 cm above the point
-        if abs(rx - x) + abs(ry - y) > 0.03:                           # beyond the arm: not beside it
-            sys.exit(f"press {side} FAILED: {x:.2f}/{y:+.2f}/{z:.2f} is out of the {side} arm's reach")
-        if rz < z + 0.04:
-            event("skill", f"press: {x:.2f}/{y:+.2f}/{z:.2f} past the arm's reach, pressing at {rx:.2f}/{ry:+.2f} from {rz:.2f}")
+        rx, ry, rz = x, y, z + 0.04                                    # robotd refuses what the arm can't reach
         from so101 import Robot
         tip = getattr(Robot(), side).tip()
         near = sum((a - b) ** 2 for a, b in zip(tip, (rx, ry, rz))) ** 0.5 < 0.02   # already there: a goto < 2 cm is refused
@@ -996,8 +982,11 @@ def skill(a):
             sys.exit(f"press {side} FAILED: {'; '.join(robot_errs(o))}")
         time.sleep(0.8)
         print(rstep(f"goto {side} {rx:.3f} {ry:.3f} {rz:.3f}"))
-    elif cmd == "open":                             # along open: both grippers open, nothing held (dashboard button)
-        print(rstep("set left_gripper 45; set right_gripper 45")); json.dump({}, open(HELD, "w")); event("held", "{}")
+    elif cmd == "open":                             # along open [side]: that gripper (no side: both, dashboard) opens
+        sides = [side] if side in ("left", "right") else ["left", "right"]
+        print(rstep("; ".join(f"set {sd}_gripper 45" for sd in sides)))
+        for sd in sides:
+            set_held(sd, "none")
     elif cmd == "reset":                            # along reset: stop everything, open, both arms back to rest (dashboard)
         interrupt_codex()
         print(rstep("set left_gripper 45; set right_gripper 45")); json.dump({}, open(HELD, "w")); event("held", "{}")
