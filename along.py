@@ -89,17 +89,20 @@ def chime(freq=660, dur=0.12):
                     f"sine=frequency={freq}:duration={dur}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def tone(freq, vol=0.35):
-    """One short beep in the background: 880 Hz = Al is on, 660 Hz = Al is off."""
-    import numpy as np
-    r = LiveVoice.RATE; t = np.arange(int(r * 0.12)) / r                # same raw format as GPT-Live's speaker stream
-    env_ = np.minimum(1, np.minimum(t, t[-1] - t) / 0.01)            # 10 ms fade in/out: no clicks
-    pcm = np.sin(2 * np.pi * freq * t) * env_ * vol * 32767
-
-    def play():
-        subprocess.run(["pw-play", "--raw", "--rate", str(r), "--channels", "1", "--format", "s16", "-"],
-                       input=pcm.astype(np.int16).tobytes(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    threading.Thread(target=play, daemon=True).start()
+def tone(freq, vol=0.3):
+    """One short beep in the background: 880 Hz = Al is on, 660 Hz = Al is off. A 48 kHz wav (the speaker's native
+    rate: no resampling) with 60 ms of silence first, so the device waking up does not clip it."""
+    import numpy as np, wave
+    path = f"{HERE}/.along_beep_{freq}.wav"
+    if not os.path.exists(path):
+        r = 48000; t = np.arange(int(r * 0.12)) / r
+        env_ = np.minimum(1, np.minimum(t, t[-1] - t) / 0.01)        # 10 ms fade in/out: no clicks
+        pcm = np.concatenate([np.zeros(int(r * 0.06)), np.sin(2 * np.pi * freq * t) * env_ * vol])
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(r)
+            w.writeframes((pcm * 32767).astype(np.int16).tobytes())
+    threading.Thread(target=subprocess.run, args=(["pw-play", path],),
+                     kwargs={"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}, daemon=True).start()
 
 
 def muted():
