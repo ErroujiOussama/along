@@ -192,9 +192,15 @@ def along_api(h, u):
     if u.path == "/along/calls.json":                                      # model calls (llm.py log) + episode states
         q = dict(parse_qsl(u.query))
         try:
-            import llm
+            import importlib
+            llm = sys.modules.get("llm")
+            if llm is None:
+                import llm
+            elif os.path.getmtime(llm.__file__) != getattr(llm, "_dash_mtime", None):
+                llm = importlib.reload(llm)                                  # log format changes (tag lines) with llm.py
+            llm._dash_mtime = os.path.getmtime(llm.__file__)
             n = max(1, min(400, int(q.get("n", 60))))
-            allc = llm.calls(10 ** 6)
+            allc = [r for r in llm.calls(10 ** 6) if "id" in r]
         except Exception as e:
             return send(json.dumps({"error": f"{type(e).__name__}: {e}"}).encode(), "application/json")
         eps = {}

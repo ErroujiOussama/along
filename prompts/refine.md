@@ -14,7 +14,8 @@ covers a similar task. Re-read a file right before you edit it. Then do the firs
 4. Save nothing: if nothing actually worked by a repeatable method (luck, the person did it, one-off), or the skill
    already says it all.
 
-A skill is NOT a script. The fast model that reads it plans its own steps from the live images each time; it needs
+A skill is NOT a script. Two readers use it: the fast model (plans its own steps from the live images each time) and
+Codex (reads it with `along skill`, runs robot commands itself). Keep it general enough for both; it needs
 to understand the objective and how to get there, not a fixed sequence. Write it like a note from an expert to a
 capable colleague: what the goal really is, the strategy that worked and why, what success looks like, and the lessons.
 
